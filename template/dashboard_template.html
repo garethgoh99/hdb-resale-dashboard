@@ -193,7 +193,14 @@ const TOWN_YEAR = __TOWN_YEAR_JSON__;     // town -> [record,...] ALL flat types
 const STREET_YEAR = __STREET_YEAR_JSON__; // town -> street -> [record,...] ALL flat types combined
 const SG_YEAR = __SG_YEAR_JSON__;
 const Q_INDEX = __Q_INDEX_JSON__;         // town -> quarterly data file (lazy-loaded, see loadQuarterly)
-const QUARTERLY_AUTO_MAX_YEARS = 5;       // Auto timescale: quarters when the range spans <= this many years
+const QUARTERLY_AUTO_MAX_YEARS = 5;
+// Data coverage as fractional years: start of the first month, END of the latest month.
+// Used so "transactions / yr" isn't diluted by months that haven't happened yet
+// (e.g. 2026 with data only to Sep counts as 0.75 of a year; 2026 Q4 counts as 0).
+const _ym = s=>{ const [y,m]=s.split('-').map(Number); return y+(m-1)/12; };
+const DATA_START_KEY = _ym('__EARLIEST_MONTH__'), DATA_END_KEY = _ym('__LATEST_MONTH__')+1/12;
+const LAST_DATA_QUARTER = Math.floor((DATA_END_KEY-1e-9)*4)/4;
+function periodYears(lo, hi, step){ return Math.max(0, Math.min(hi+step, DATA_END_KEY) - Math.max(lo, DATA_START_KEY)); }       // Auto timescale: quarters when the range spans <= this many years
 const _qCache = {};
 function loadQuarterly(rankCtx){
   const file = rankCtx.level==='sg' ? 'sg.json' : Q_INDEX[rankCtx.town];
@@ -282,7 +289,7 @@ const DIM_FMT = {
   PSF:   v=>v==null?'—':'$'+v.toFixed(0),
 };
 const RM = {
-  velocity:    {label:'Transactions / yr', compute:(recs,yl,yh,step=1)=>{const f=filterRange(recs,yl,yh); const yrs=Math.max(step,yh-yl+step); return f.length? sumN(f)/yrs : null;}, fmt:v=>v==null?'—':v.toFixed(1)+'/yr'},
+  velocity:    {label:'Transactions / yr', compute:(recs,yl,yh,step=1)=>{const f=filterRange(recs,yl,yh); const yrs=periodYears(yl,yh,step); return f.length&&yrs>0? sumN(f)/yrs : null;}, fmt:v=>v==null?'—':v.toFixed(1)+'/yr'},
   price:       {get label(){return `${STAT_MODE_LABELS[globalStatMode]} price`;},       compute:(recs,yl,yh)=>statValue('PRICE',recs,yl,yh), fmt:DIM_FMT.PRICE},
   lease:       {get label(){return `${STAT_MODE_LABELS[globalStatMode]} lease left`;},  compute:(recs,yl,yh)=>statValue('LEASE',recs,yl,yh), fmt:DIM_FMT.LEASE},
   psf:         {get label(){return `${STAT_MODE_LABELS[globalStatMode]} $psf`;},        compute:(recs,yl,yh)=>statValue('PSF',recs,yl,yh),   fmt:DIM_FMT.PSF},
@@ -534,7 +541,7 @@ function updateMapPeriod(){
     ensureMapQuarterly();
     if(mapQYl!==mapYl || mapQYh!==mapYh){
       mapQYl=mapYl; mapQYh=mapYh;
-      const opts=[]; for(let y=mapYl;y<=mapYh;y++) for(let q=0;q<4;q++) opts.push(y+q/4);
+      const opts=[]; for(let y=mapYl;y<=mapYh;y++) for(let q=0;q<4;q++){ const v=y+q/4; if(v<=LAST_DATA_QUARTER+1e-9 && v+0.25>DATA_START_KEY) opts.push(v); }
       mapQFrom.innerHTML = opts.map(v=>`<option value="${v}">${fmtPeriod(v,true)}</option>`).join('');
       mapQTo.innerHTML = mapQFrom.innerHTML;
       mapQFrom.value=String(opts[0]); mapQTo.value=String(opts[opts.length-1]);
@@ -876,7 +883,7 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
     // Rebuild the from/to quarter pickers when the year range changes; keep choices otherwise.
     if(qYl===yl && qYh===yh) return;
     qYl=yl; qYh=yh;
-    const opts=[]; for(let y=yl;y<=yh;y++) for(let q=0;q<4;q++) opts.push(y+q/4);
+    const opts=[]; for(let y=yl;y<=yh;y++) for(let q=0;q<4;q++){ const v=y+q/4; if(v<=LAST_DATA_QUARTER+1e-9 && v+0.25>DATA_START_KEY) opts.push(v); }
     qFrom.innerHTML = opts.map(v=>`<option value="${v}">${fmtPeriod(v,true)}</option>`).join('');
     qTo.innerHTML = qFrom.innerHTML;
     qFrom.value = String(opts[0]); qTo.value = String(opts[opts.length-1]);
@@ -965,8 +972,8 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
     const qlo = lo-1e-9, qhi = hi+1e-9;
     const crIn = filterRange(cr, qlo, qhi);
     const totalNrCombined = sumN(crIn);
-    const spanYears = quarterly ? (hi-lo)+0.25 : (yh-yl+1);
-    const vVelocity = crIn.length ? totalNrCombined/spanYears : null;
+    const spanYears = quarterly ? periodYears(lo,hi,0.25) : periodYears(yl,yh,1);
+    const vVelocity = crIn.length && spanYears>0 ? totalNrCombined/spanYears : null;
     const vPrice = RM.price.compute(cr, qlo, qhi);
     const vLease = RM.lease.compute(cr, qlo, qhi);
     const vPsf = RM.psf.compute(cr, qlo, qhi);
