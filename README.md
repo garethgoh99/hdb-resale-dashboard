@@ -2,7 +2,7 @@
 
 An interactive dashboard of Singapore HDB resale prices from 1990 to now, broken down by town, street, flat type and year. It rebuilds itself every day from data.gov.sg and is served on GitHub Pages.
 
-**Live dashboard:** `https://<your-github-username>.github.io/<repo-name>/`
+**Live dashboard:** https://garethgoh99.github.io/hdb-resale-dashboard/
 
 ## How it stays up to date
 
