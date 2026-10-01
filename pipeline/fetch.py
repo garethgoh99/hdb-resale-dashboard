@@ -1,8 +1,10 @@
 """
 Fetch the five data.gov.sg "Resale Flat Prices" datasets into data/raw/<dataset_id>.csv.
 
-- The four pre-2017 datasets are static: they are fetched once and then re-used from
-  data/raw/ (the GitHub Actions workflow caches that folder between runs).
+- The four pre-2017 datasets are (expected to be) static: they are pulled from the API
+  too, but only re-pulled every STATIC_REFRESH_DAYS (default 7) in case data.gov.sg
+  revises them. In between, the copy cached by GitHub Actions is reused. If a re-pull
+  fails, the cached copy is kept instead of failing the run.
 - The Jan-2017-onwards dataset is live and is re-fetched on EVERY run.
 
 Two fetch paths are tried in order:
@@ -34,6 +36,7 @@ DATASETS = {
 REQUIRED_COLS = {"month", "town", "flat_type", "block", "street_name", "storey_range",
                  "floor_area_sqm", "flat_model", "lease_commence_date", "resale_price"}
 
+STATIC_REFRESH_DAYS = int(os.environ.get("STATIC_REFRESH_DAYS", "7"))
 RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
 API_KEY = os.environ.get("DATA_GOV_SG_API_KEY", "").strip()
 HEADERS = {"x-api-key": API_KEY} if API_KEY else {}
@@ -128,9 +131,14 @@ def main():
     print(f"API key present: {'yes' if API_KEY else 'NO (public rate limits)'}")
     for ds, meta in DATASETS.items():
         path = os.path.join(RAW_DIR, f"{ds}.csv")
-        if meta["static"] and os.path.exists(path) and os.path.getsize(path) > 1_000_000:
-            print(f"[cached] {meta['label']}")
-            continue
+        stamp = path + ".fetched"
+        have_copy = os.path.exists(path) and os.path.getsize(path) > 1_000_000
+        if meta["static"] and have_copy and os.path.exists(stamp):
+            age_days = (time.time() - float(open(stamp).read().strip() or 0)) / 86400
+            if age_days < STATIC_REFRESH_DAYS:
+                print(f"[cached] {meta['label']} (pulled {age_days:.1f} days ago; "
+                      f"re-pulled every {STATIC_REFRESH_DAYS} days)")
+                continue
         print(f"[fetch]  {meta['label']}  ({ds})", flush=True)
         rows, errors = None, []
         for name, fn in (("bulk download", fetch_bulk), ("datastore_search", fetch_paged)):
@@ -145,8 +153,19 @@ def main():
                 print(f"  {name} failed: {e}", flush=True)
                 rows = None
         if rows is None:
+            if meta["static"] and have_copy:
+                # A historical era failed to re-pull: keep the copy we already have.
+                print(f"  WARNING: keeping previously fetched copy of {ds}")
+                continue
             sys.exit(f"FAILED to fetch {ds}: " + " | ".join(errors))
+        if meta["static"] and have_copy:
+            with open(path, newline="", encoding="utf-8") as f:
+                old_n = sum(1 for _ in f) - 1
+            if old_n != len(rows):
+                print(f"  NOTE: historical dataset changed: {old_n:,} -> {len(rows):,} rows")
         write_csv(rows, path)
+        with open(stamp, "w") as f:
+            f.write(str(time.time()))
     print("All datasets present.")
 
 

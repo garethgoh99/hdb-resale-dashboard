@@ -10,7 +10,7 @@ A GitHub Actions workflow (`.github/workflows/refresh-dashboard.yml`) runs every
 
 1. **`pipeline/fetch.py`** pulls the five data.gov.sg "Resale Flat Prices" datasets.
    - The Jan-2017-onwards dataset (`d_8b84c4ee58e3cfc0ece0d773c8ca6abc`) is re-pulled on every run.
-   - The four pre-2017 datasets never change. They're fetched once and then reused from the Actions cache.
+   - The four pre-2017 datasets are pulled from the API too, but only re-pulled once a week in case data.gov.sg ever revises them. In between, the copy in the Actions cache is reused, and if a weekly re-pull fails, the previous copy is kept.
    - The script tries the bulk-download API first and falls back to the paged `datastore_search` API.
    - It refuses to continue if a dataset comes back empty, short or with missing columns.
 2. **`pipeline/harmonize.py`** merges the five eras into one schema. This covers the lease-string parsing, the `MULTI GENERATION` spelling fix, the 99-year-lease fallback and $psf.
@@ -39,4 +39,4 @@ python pipeline/fetch.py && python pipeline/harmonize.py && python pipeline/buil
 open site/index.html
 ```
 
-You can also drop CSVs you've downloaded by hand into `data/raw/` as `<dataset_id>.csv`. `fetch.py` treats any pre-2017 file already there as cached.
+You can also drop CSVs you've downloaded by hand into `data/raw/` as `<dataset_id>.csv`. `fetch.py` uses them until its next weekly re-pull.

@@ -33,18 +33,21 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # The four pre-2017 datasets never change: fetch them once, then reuse from cache.
-      - name: Restore static (pre-2017) datasets
+      # The four pre-2017 datasets are pulled from the API too, but only re-pulled weekly
+      # (fetch.py decides); in between, the cached copy is reused. A unique key per run
+      # means the latest copies are saved every time; restore-keys picks up the newest.
+      - name: Restore pre-2017 datasets from cache
         uses: actions/cache@v4
         with:
           path: |
-            data/raw/d_ebc5ab87086db484f88045b47411ebc5.csv
-            data/raw/d_43f493c6c50d54243cc1eab0df142d6a.csv
-            data/raw/d_2d5ff9ea31397b66239f245f57751537.csv
-            data/raw/d_ea9ed51da2787afaf8e51f827c304208.csv
-          key: hdb-static-eras-v1
+            data/raw/d_ebc5ab87086db484f88045b47411ebc5.csv*
+            data/raw/d_43f493c6c50d54243cc1eab0df142d6a.csv*
+            data/raw/d_2d5ff9ea31397b66239f245f57751537.csv*
+            data/raw/d_ea9ed51da2787afaf8e51f827c304208.csv*
+          key: hdb-static-eras-${{ github.run_id }}
+          restore-keys: hdb-static-eras-
 
-      - name: Fetch data from data.gov.sg (2017+ is re-pulled every run)
+      - name: Fetch data from data.gov.sg (2017+ every run, pre-2017 weekly)
         env:
           DATA_GOV_SG_API_KEY: ${{ secrets.DATA_GOV_SG_API_KEY }}
         run: python pipeline/fetch.py
