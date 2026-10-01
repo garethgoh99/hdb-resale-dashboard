@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HDB Resale Price Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#F3F1EA; --panel:#FFFFFF; --panel-2:#FAF9F4; --border:#DAD6C8;
+  --ink:#1B2420; --ink-soft:#5B6560; --accent:#0E7C6B; --accent-2:#C97A2B;
+  --grid:#E4E0D2; --chip:#EEEBDF; --land:#0E7C6B; --warn:#B0562E;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10161A; --panel:#171F24; --panel-2:#1C252B; --border:#2A363D;
+    --ink:#E7EEEC; --ink-soft:#8FA0A0; --accent:#3FCBB0; --accent-2:#E8A94E;
+    --grid:#25313A; --chip:#20292F; --land:#3FCBB0; --warn:#E8A94E;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10161A; --panel:#171F24; --panel-2:#1C252B; --border:#2A363D;
+  --ink:#E7EEEC; --ink-soft:#8FA0A0; --accent:#3FCBB0; --accent-2:#E8A94E;
+  --grid:#25313A; --chip:#20292F; --land:#3FCBB0; --warn:#E8A94E;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px); height:100%;}
+*{box-sizing:border-box;}
+body{margin:0; min-height:100%; background:var(--bg); color:var(--ink); font-family:"Inter",-apple-system,sans-serif; font-feature-settings:"tnum" 1;}
+h1,h2,h3,.disp{font-family:"Space Grotesk",sans-serif;}
+.wrap{max-width:1420px; margin:0 auto; padding:18px 20px 40px;}
+header.top{display:flex; flex-wrap:wrap; align-items:baseline; gap:10px 22px; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:14px;}
+header.top h1{font-size:22px; margin:0; font-weight:700; letter-spacing:.2px;}
+header.top .sub{color:var(--ink-soft); font-size:13px; max-width:520px;}
+.statbar{display:flex; gap:22px; margin-left:auto; flex-wrap:wrap;}
+.stat{font-size:12px; color:var(--ink-soft);}
+.stat b{display:block; font-size:17px; color:var(--ink); font-family:"Space Grotesk",sans-serif; font-weight:600;}
+.grid{display:grid; grid-template-columns:1.1fr 1.3fr; gap:18px; align-items:start;}
+@media (max-width:980px){ .grid{grid-template-columns:1fr;} }
+.panel{background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:16px;}
+.panel h2{font-size:14px; margin:0 0 10px; font-weight:600; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;}
+.panel h2 .hint{font-size:11px; color:var(--ink-soft); font-weight:400;}
+svg#map{width:100%; height:auto; display:block;}
+.sg-land{fill:var(--land); fill-opacity:.10; stroke:var(--land); stroke-opacity:.35; stroke-width:1.2;}
+.town-dot{cursor:pointer; transition:opacity .15s;}
+.town-dot:hover{opacity:.75;}
+.town-label{font-size:8.5px; fill:var(--ink-soft); font-family:"Inter",sans-serif; pointer-events:none;}
+.town-label.active{fill:var(--ink); font-weight:600;}
+.sg-marker{cursor:pointer;}
+.sg-marker circle{fill:none; stroke:var(--accent-2); stroke-width:1.6; stroke-dasharray:3 2;}
+.sg-marker:hover circle{fill:var(--accent-2); fill-opacity:.15;}
+.sg-marker text{font-size:9px; fill:var(--ink-soft); font-family:"Inter",sans-serif;}
+.sg-marker.active circle{fill:var(--accent-2); fill-opacity:.3; stroke-width:2;}
+.map-controls{display:flex; flex-direction:column; gap:10px; margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);}
+.map-controls .lbl{font-size:11px; color:var(--ink-soft); display:flex; justify-content:space-between; margin-bottom:5px;}
+.metric-pills{display:flex; flex-wrap:wrap; gap:5px;}
+.metric-pills .pill{font-size:11px; padding:4px 10px;}
+.legend-swatches{display:flex; flex-direction:column; margin-top:10px; font-size:10px; color:var(--ink-soft); max-width:420px;}
+.legend-swatches .bar-row{display:flex; width:100%; height:16px; border-radius:3px; overflow:hidden;}
+.legend-swatches .bar-row .seg{flex:1;}
+.legend-swatches .lab-row{position:relative; height:16px; width:100%; margin-top:2px;}
+.legend-swatches .lab-row .lab{position:absolute; top:0; transform:translateX(-50%); font-size:10px; font-weight:600; white-space:nowrap;}
+.legend-swatches .lab-row .lab.end{font-weight:400; color:var(--ink-soft); opacity:.8;}
+.legend-note{font-size:10.5px; color:var(--ink-soft); margin-top:8px;}
+.map-note{font-size:10.5px; color:var(--ink-soft); margin-top:4px; font-style:italic;}
+.crumbs{font-size:12px; color:var(--ink-soft); margin-bottom:10px;}
+.crumbs button{background:none; border:none; color:var(--accent); cursor:pointer; font-size:12px; padding:0; font-family:inherit;}
+.crumbs .sep{margin:0 5px;}
+#streetlist{display:flex; flex-direction:column; gap:1px; max-height:560px; overflow-y:auto; border-top:1px solid var(--border);}
+.street-row{padding:8px 4px; border-bottom:1px solid var(--border); cursor:pointer; background:var(--panel); transition:background .1s;}
+.street-row:hover{background:var(--panel-2);}
+.street-row.avgrow{background:var(--chip); font-weight:600;}
+.street-row.sgrow{background:var(--chip); font-weight:700; border-bottom:2px solid var(--accent-2);}
+.street-row .toprow{display:flex; justify-content:space-between; align-items:center; gap:8px;}
+.street-row .n{font-size:11px; color:var(--ink-soft); white-space:nowrap;}
+.street-row .name{font-size:13px;}
+.velobar{height:5px; background:var(--grid); border-radius:2px; margin-top:5px; overflow:hidden; position:relative;}
+.velobar i{display:block; height:100%; background:var(--accent-2); border-radius:2px;}
+.velobar.sgbar i{background:var(--accent);}
+.velobar.avgbar i{background:var(--warn);}
+.empty{color:var(--ink-soft); font-size:13px; padding:30px 10px; text-align:center; line-height:1.6;}
+.filters{display:flex; flex-direction:column; gap:14px; margin-bottom:14px;}
+.filter-row label{font-size:11px; color:var(--ink-soft); display:flex; justify-content:space-between; margin-bottom:5px;}
+.pills{display:flex; flex-wrap:wrap; gap:6px;}
+.pill{border:1px solid var(--border); background:var(--chip); border-radius:20px; padding:5px 12px; font-size:12px; cursor:pointer; color:var(--ink-soft); user-select:none;}
+.pill.on{background:var(--accent); border-color:var(--accent); color:#08110F;}
+.rangewrap{position:relative; height:28px;}
+.rangewrap input[type=range]{position:absolute; width:100%; top:8px; background:none; -webkit-appearance:none; pointer-events:none;}
+.rangewrap input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; pointer-events:auto; width:14px; height:14px; border-radius:50%; background:var(--accent); border:2px solid var(--panel); cursor:pointer; margin-top:-5px;}
+.rangewrap input[type=range]::-moz-range-thumb{pointer-events:auto; width:14px; height:14px; border-radius:50%; background:var(--accent); border:2px solid var(--panel); cursor:pointer;}
+.rangewrap input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--grid); border-radius:2px;}
+.rangewrap input[type=range]::-moz-range-track{height:4px; background:var(--grid); border-radius:2px;}
+.rowflex{display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:space-between;}
+select.metricSel{font-size:12px; background:var(--chip); color:var(--ink); border:1px solid var(--border); border-radius:5px; padding:6px 8px; font-family:inherit;}
+.reset{font-size:11px; color:var(--accent); background:none; border:1px solid var(--accent); border-radius:4px; padding:4px 10px; cursor:pointer;}
+.chartbox{height:300px; margin-top:10px; position:relative;}
+.miniStats{display:flex; gap:14px; margin-top:14px; flex-wrap:wrap;}
+.miniStats .m{font-size:11px; color:var(--ink-soft); min-width:118px;}
+.miniStats .m b{display:block; font-size:15px; color:var(--ink); font-family:"Space Grotesk",sans-serif;}
+.rankTag{display:inline-block; margin-top:2px; font-size:10px; padding:1px 6px; border-radius:8px; background:var(--chip); color:var(--ink-soft); font-weight:600;}
+.miniStats-sub{font-size:10.5px; color:var(--ink-soft); margin-top:2px; font-style:italic;}
+.tableToggle{font-size:12px; color:var(--accent); background:none; border:1px solid var(--accent); border-radius:5px; padding:6px 12px; cursor:pointer; margin-top:14px;}
+.tablewrap{margin-top:12px; max-height:320px; overflow:auto; border:1px solid var(--border); border-radius:4px; display:none;}
+.tablewrap.show{display:block;}
+table.datatable{border-collapse:collapse; width:100%; font-size:12px;}
+table.datatable th{position:sticky; top:0; background:var(--panel-2); text-align:right; padding:7px 9px; border-bottom:1px solid var(--border); font-weight:600; white-space:nowrap;}
+table.datatable th:first-child, table.datatable td:first-child{text-align:left;}
+table.datatable td{padding:6px 9px; text-align:right; border-bottom:1px solid var(--grid); white-space:nowrap;}
+table.datatable tr:hover td{background:var(--panel-2);}
+.note{font-size:11px; color:var(--ink-soft); margin-top:16px; line-height:1.6; border-top:1px solid var(--border); padding-top:10px;}
+::-webkit-scrollbar{width:8px;} ::-webkit-scrollbar-thumb{background:var(--border); border-radius:4px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>HDB Resale Price Explorer</h1>
+      <div class="sub">Registered resale transactions, __EARLIEST_MONTH__ – __LATEST_MONTH__, by town and street. <span style="opacity:.75">Auto-refreshed from data.gov.sg · last refreshed __BUILT_AT__</span></div>
+    </div>
+    <div class="statbar">
+      <div class="stat"><b>__TOTAL_TX__</b>transactions</div>
+      <div class="stat"><b>__TOTAL_TOWNS__</b>towns</div>
+      <div class="stat"><b>__TOTAL_STREETS__</b>streets tracked</div>
+      <div class="stat"><b>__LATEST_MONTH__</b>data as of</div>
+    </div>
+  </header>
+
+  <button class="tableToggle" id="compareToggle" style="margin-bottom:16px;">Compare all townships ▾</button>
+  <div class="panel tablewrap" id="comparePanel" style="max-height:520px; margin-bottom:18px;">
+    <div style="font-size:11px; color:var(--ink-soft); margin-bottom:8px;">Reflects the year range selected on the map below. Click a column to sort.</div>
+    <table class="datatable" id="compareTable"></table>
+  </div>
+
+  <div class="grid">
+    <div class="panel" id="mapwrap">
+      <h2>Singapore, by town <span class="hint">click a town, or the dashed circle for the whole market</span></h2>
+      <div class="map-controls">
+        <div>
+          <div class="lbl"><span>Statistic</span><span style="font-style:italic;">applies to EVERY figure in this dashboard — map, table, bars, charts, mini-stats</span></div>
+          <div class="metric-pills" id="statModePills"></div>
+        </div>
+        <div>
+          <div class="lbl"><span>Year range</span><span id="mapYrLbl"></span></div>
+          <div class="rangewrap"><input type="range" id="mapYrLow" min="1990" max="2026" value="1990">
+          <input type="range" id="mapYrHigh" min="1990" max="2026" value="2026"></div>
+        </div>
+        <div>
+          <div class="lbl"><span>Flat types included</span><span style="font-style:italic;">applies to map, comparison table &amp; street rankings</span></div>
+          <div class="metric-pills" id="mapTypePills"></div>
+        </div>
+        <div>
+          <div class="lbl"><span>Circle color shows</span><span style="font-style:italic;">circle size is always tx/yr in range</span></div>
+          <div class="metric-pills" id="mapMetricPills"></div>
+        </div>
+      </div>
+      <svg id="map" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="legend-swatches" id="legendSwatches"></div>
+      <div class="legend-note" id="legendNote"></div>
+      <div class="map-note">Coastline traced from a reference outline for orientation only, not a surveyed boundary; town positions are approximate centroids. Gray/dashed = no transactions for that town in the selected year range.</div>
+    </div>
+
+    <div class="panel">
+      <h2 id="rightTitle">Select a town</h2>
+      <div class="crumbs" id="crumbs"></div>
+      <div id="rightBody"><div class="empty">Click a town on the map to see its streets, or click the dashed "All Singapore" circle for the nationwide picture.</div></div>
+    </div>
+  </div>
+
+  <div class="note" id="footnote"></div>
+</div>
+
+<script>
+const STREET_DATA = __STREET_DATA_JSON__;
+const TOWN_AGG = __TOWN_AGG_JSON__;
+const SG_AGG = __SG_AGG_JSON__;
+const TOWN_SUMMARY = __TOWN_SUMMARY_JSON__;
+const TOWN_COORDS = __TOWN_COORDS_JSON__;
+const TOWN_YEAR = __TOWN_YEAR_JSON__;     // town -> [record,...] ALL flat types combined, correct medians
+const STREET_YEAR = __STREET_YEAR_JSON__; // town -> street -> [record,...] ALL flat types combined
+const SG_YEAR = __SG_YEAR_JSON__;         // [record,...] nationwide, ALL flat types combined
+// record fields (18): year, n, then mean/median/min/max for EACH of price, lease, area, psf.
+// Having all four statistics for every dimension (not just price) is what makes the global
+// median/mean/lowest/highest toggle below apply uniformly everywhere, not just to price.
+const F = {
+  YEAR:0, N:1,
+  PRICE_MEAN:2, PRICE_MEDIAN:3, PRICE_MIN:4, PRICE_MAX:5,
+  LEASE_MEAN:6, LEASE_MEDIAN:7, LEASE_MIN:8, LEASE_MAX:9,
+  AREA_MEAN:10, AREA_MEDIAN:11, AREA_MIN:12, AREA_MAX:13,
+  PSF_MEAN:14, PSF_MEDIAN:15, PSF_MIN:16, PSF_MAX:17,
+};
+const SQM_TO_SQFT = 10.7639;
+const sqft = sqm => Math.round(sqm*SQM_TO_SQFT);
+
+// ---------- Global "statistic" toggle: median (default) / mean / lowest / highest ----------
+// A separate layer, orthogonal to which metric or flat type is selected: every price/lease/
+// area/psf figure anywhere in the dashboard (map, compare table, street bars, mini-stats,
+// chart) is read off whichever of the four columns this is set to. Median is the default
+// because it's more robust to outliers than mean; "lowest"/"highest" answer a genuinely
+// different question (downside/upside risk within the group) than a central tendency does.
+const STAT_MODES = ['median','mean','low','high'];
+const STAT_MODE_LABELS = {median:'Median', mean:'Mean', low:'Lowest', high:'Highest'};
+const STAT_FIELD_SUFFIX = {median:'MEDIAN', mean:'MEAN', low:'MIN', high:'MAX'};
+let globalStatMode = 'median';
+function dimField(dim, mode){ return F[`${dim}_${STAT_FIELD_SUFFIX[mode]}`]; }
+
+// ---------- Shared "range metrics" catalog ----------
+// Every one of these takes a plain array of yearly 18-field records (the SAME schema
+// whether it's a street, a town, or nationwide) and a [yl,yh] year range, and returns one
+// number (or null if there's no data in range). This one definition is reused by the map's
+// color toggle, the township comparison table, the per-street ranking bars, and the rank
+// badges in the street/town/nationwide detail panel -- so "price" means exactly the same
+// calculation everywhere in the dashboard (and always reflects the current statMode).
+function filterRange(records, yl, yh){ return (records||[]).filter(r=>r[F.YEAR]>=yl && r[F.YEAR]<=yh); }
+function sumN(records){ return records.reduce((a,r)=>a+r[F.N],0); }
+function weightedMean(records, fieldIdx){
+  const n = sumN(records); if(!n) return null;
+  return records.reduce((a,r)=>a+r[fieldIdx]*r[F.N],0)/n;
+}
+function minField(records, fieldIdx){ if(!records.length) return null; return Math.min(...records.map(r=>r[fieldIdx])); }
+function maxField(records, fieldIdx){ if(!records.length) return null; return Math.max(...records.map(r=>r[fieldIdx])); }
+function cagrField(records, fieldIdx){
+  // Compound Annual Growth Rate: the steady annual rate that gets you from the first
+  // value to the last value present in range. Always a PER-YEAR figure.
+  if(records.length<2) return null;
+  const sorted = records.slice().sort((a,b)=>a[F.YEAR]-b[F.YEAR]);
+  const first = sorted[0], last = sorted[sorted.length-1];
+  const yrs = last[F.YEAR]-first[F.YEAR];
+  if(yrs<=0 || !first[fieldIdx]) return null;
+  return (Math.pow(last[fieldIdx]/first[fieldIdx], 1/yrs)-1)*100;
+}
+function totalGrowthField(records, fieldIdx){
+  // Total % change from the first value to the last value present in range -- NOT
+  // annualized. Deliberately different from CAGR: CAGR answers "what steady yearly rate
+  // would get here"; this answers "how much did it change overall across the period".
+  if(records.length<2) return null;
+  const sorted = records.slice().sort((a,b)=>a[F.YEAR]-b[F.YEAR]);
+  const first = sorted[0], last = sorted[sorted.length-1];
+  if(!first[fieldIdx]) return null;
+  return (last[fieldIdx]/first[fieldIdx]-1)*100;
+}
+// For "median"/"mean" mode, a multi-year range is combined via a transaction-weighted
+// average of each year's figure (a standard, labeled approximation -- see footnote). For
+// "low"/"high" mode, a multi-year range is combined via the literal min/max across those
+// years (an exact operation, not an approximation: the lowest transaction across 5 years
+// really is the min of each year's lowest).
+function statValue(dim, records, yl, yh){
+  const fieldIdx = dimField(dim, globalStatMode);
+  const recs = filterRange(records, yl, yh);
+  if(globalStatMode==='low') return minField(recs, fieldIdx);
+  if(globalStatMode==='high') return maxField(recs, fieldIdx);
+  return weightedMean(recs, fieldIdx);
+}
+const DIM_FMT = {
+  PRICE: v=>v==null?'—':'$'+Math.round(v).toLocaleString(),
+  LEASE: v=>v==null?'—':v.toFixed(1)+'y',
+  AREA:  v=>v==null?'—':`${v.toFixed(1)} sqm / ${sqft(v)} sqft`,
+  PSF:   v=>v==null?'—':'$'+v.toFixed(0),
+};
+const RM = {
+  velocity:    {label:'Transactions / yr', compute:(recs,yl,yh)=>{const f=filterRange(recs,yl,yh); const yrs=Math.max(1,yh-yl+1); return f.length? sumN(f)/yrs : null;}, fmt:v=>v==null?'—':v.toFixed(1)+'/yr'},
+  price:       {get label(){return `${STAT_MODE_LABELS[globalStatMode]} price`;},       compute:(recs,yl,yh)=>statValue('PRICE',recs,yl,yh), fmt:DIM_FMT.PRICE},
+  lease:       {get label(){return `${STAT_MODE_LABELS[globalStatMode]} lease left`;},  compute:(recs,yl,yh)=>statValue('LEASE',recs,yl,yh), fmt:DIM_FMT.LEASE},
+  psf:         {get label(){return `${STAT_MODE_LABELS[globalStatMode]} $psf`;},        compute:(recs,yl,yh)=>statValue('PSF',recs,yl,yh),   fmt:DIM_FMT.PSF},
+  area:        {get label(){return `${STAT_MODE_LABELS[globalStatMode]} floor area`;},  compute:(recs,yl,yh)=>statValue('AREA',recs,yl,yh),  fmt:DIM_FMT.AREA},
+  cagr_price:  {get label(){return `CAGR, ${STAT_MODE_LABELS[globalStatMode].toLowerCase()} price (annualized)`;}, compute:(recs,yl,yh)=>cagrField(filterRange(recs,yl,yh),dimField('PRICE',globalStatMode)), fmt:v=>v==null?'—':(v>=0?'+':'')+v.toFixed(1)+'%/yr'},
+  cagr_psf:    {get label(){return `CAGR, ${STAT_MODE_LABELS[globalStatMode].toLowerCase()} $psf (annualized)`;},  compute:(recs,yl,yh)=>cagrField(filterRange(recs,yl,yh),dimField('PSF',globalStatMode)),   fmt:v=>v==null?'—':(v>=0?'+':'')+v.toFixed(1)+'%/yr'},
+  growth_price:{get label(){return `Total % growth, ${STAT_MODE_LABELS[globalStatMode].toLowerCase()} price (period)`;}, compute:(recs,yl,yh)=>totalGrowthField(filterRange(recs,yl,yh),dimField('PRICE',globalStatMode)), fmt:v=>v==null?'—':(v>=0?'+':'')+v.toFixed(1)+'%'},
+};
+// Exactly the 6 the map/compare-table toggle between (color dimension only -- size is
+// always velocity). "Lowest"/"highest price" are no longer separate entries here -- they're
+// now just the statMode toggle applied to "price", which also makes them apply to lease/
+// psf/CAGR at the same time, instead of being price-only special cases.
+const MAP_METRICS = ['price','lease','psf','cagr_price','cagr_psf','growth_price'];
+// The 7 the per-town street-ranking bar toggles between
+const BAR_METRICS = ['velocity','price','lease','psf','cagr_price','cagr_psf','growth_price'];
+// Compact formatter used ONLY in the map legend, where space is tight -- everywhere else
+// (mini-stats, tables) shows full figures.
+function legendFmt(metricKey, v){
+  if(v==null) return '—';
+  if(metricKey==='price') return '$'+Math.round(v/1000)+'k';
+  return RM[metricKey].fmt(v);
+}
+
+// ---------- Flat-type subset combination ----------
+// The precomputed TOWN_YEAR/STREET_YEAR/SG_YEAR are EXACT combined-across-all-flat-types
+// data (correct medians, computed via direct groupby -- see hdb-data-aggregation). When the
+// person deselects some flat types, we need a combined series for just the SELECTED types,
+// which we don't have precomputed (too many possible subsets). For every dimension
+// (price/lease/area/psf): n and MEAN recombine exactly via a weighted sum; MIN/MAX
+// recombine exactly via min()/max(); MEDIAN does NOT recombine exactly from per-type
+// medians -- approximated with a transaction-count-weighted average of the selected types'
+// medians, same approximation already used elsewhere in this dashboard, and labeled in the
+// footnote.
+const MASTER_FLAT_TYPES = ['1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION'].filter(ft=>SG_AGG[ft]);
+function isFullSelection(perTypeObj, selectedTypes){
+  return Object.keys(perTypeObj||{}).every(ft=>selectedTypes.includes(ft));
+}
+const COMBINE_DIMS = ['PRICE','LEASE','AREA','PSF'];
+function combineByYearApprox(perTypeObj, selectedTypes){
+  const acc = {};
+  selectedTypes.forEach(ft=>{
+    (perTypeObj[ft]||[]).forEach(r=>{
+      const y=r[F.YEAR];
+      if(!acc[y]){
+        acc[y] = {n:0};
+        COMBINE_DIMS.forEach(d=>{ acc[y][d] = {meanN:0, medN:0, min:Infinity, max:-Infinity}; });
+      }
+      const a=acc[y], n=r[F.N];
+      a.n += n;
+      COMBINE_DIMS.forEach(d=>{
+        const ad = a[d];
+        ad.meanN += r[F[`${d}_MEAN`]]*n;
+        ad.medN  += r[F[`${d}_MEDIAN`]]*n;
+        ad.min = Math.min(ad.min, r[F[`${d}_MIN`]]);
+        ad.max = Math.max(ad.max, r[F[`${d}_MAX`]]);
+      });
+    });
+  });
+  return Object.entries(acc).map(([y,a])=>{
+    const n = a.n;
+    const rec = [+y, n];
+    COMBINE_DIMS.forEach(d=>{
+      const ad = a[d];
+      const round1 = x => +x.toFixed(1);
+      const isPrice = d==='PRICE';
+      rec.push(isPrice?Math.round(ad.meanN/n):round1(ad.meanN/n));
+      rec.push(isPrice?Math.round(ad.medN/n):round1(ad.medN/n));
+      rec.push(isPrice?ad.min:round1(ad.min));
+      rec.push(isPrice?ad.max:round1(ad.max));
+    });
+    return rec;
+  }).sort((x,y2)=>x[0]-y2[0]);
+}
+// exactRecords = the precomputed all-types-combined array (TOWN_YEAR[t] etc); perTypeObj =
+// the matching per-flat-type object (TOWN_AGG[t] etc); selectedTypes = currently toggled-on
+// flat types. Returns the EXACT precomputed array whenever the selection covers everything
+// this entity actually has (so results don't change from before when nothing's deselected),
+// and only falls back to the approximation when something's genuinely excluded.
+function combinedForSelection(exactRecords, perTypeObj, selectedTypes){
+  if(isFullSelection(perTypeObj, selectedTypes)) return exactRecords||[];
+  return combineByYearApprox(perTypeObj||{}, selectedTypes);
+}
+
+function computeRank(metricKey, yl, yh, rankCtx, activeTypes){
+  if(!rankCtx || rankCtx.level==='sg') return '';
+  let peerKeys, exactMap, perTypeMap, ownKey;
+  if(rankCtx.level==='street'){
+    peerKeys = Object.keys(STREET_YEAR[rankCtx.town]||{});
+    exactMap = STREET_YEAR[rankCtx.town]||{}; perTypeMap = STREET_DATA[rankCtx.town]||{};
+    ownKey = rankCtx.street;
+  } else {
+    peerKeys = Object.keys(TOWN_YEAR);
+    exactMap = TOWN_YEAR; perTypeMap = TOWN_AGG;
+    ownKey = rankCtx.town;
+  }
+  const types = activeTypes && activeTypes.length ? activeTypes : MASTER_FLAT_TYPES;
+  const entries = peerKeys.map(k=>{
+    const combined = combinedForSelection(exactMap[k], perTypeMap[k], types);
+    return {k, v: RM[metricKey].compute(combined,yl,yh)};
+  }).filter(e=>e.v!=null);
+  entries.sort((a,b)=>b.v-a.v);
+  const idx = entries.findIndex(e=>e.k===ownKey);
+  if(idx<0) return '';
+  return `#${idx+1} of ${entries.length}`;
+}
+
+// ---------- Outline & projection (unchanged from map-outline skill) ----------
+const OUTLINE_PTS = [[28.0,295.6],[38.1,319.5],[59.9,327.2],[137.2,326.1],[212.9,343.5],[244.0,362.0],[269.2,405.5],[328.8,412.0],[354.0,404.4],[427.1,333.7],[533.0,300.0],[567.5,264.1],[612.0,182.5],[597.7,166.2],[496.9,127.0],[375.0,47.6],[336.4,31.3],[291.0,28.0],[223.8,65.0],[149.0,65.0],[116.2,83.5],[96.9,108.5],[81.8,171.6],[33.9,258.6]];
+const LAT_MIN=1.2485, LAT_MAX=1.4825, LON_MIN=103.6594, LON_MAX=104.0064;
+const MAP_TOP=28, MAP_BOTTOM=412, MAP_LEFT=28, MAP_RIGHT=612;
+function project(lat,lon){
+  const x = MAP_LEFT + (lon-LON_MIN)/(LON_MAX-LON_MIN) * (MAP_RIGHT-MAP_LEFT);
+  const y = MAP_TOP + (LAT_MAX-lat)/(LAT_MAX-LAT_MIN) * (MAP_BOTTOM-MAP_TOP);
+  return [x,y];
+}
+function pointInPolygon(x,y,poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i][0], yi=poly[i][1], xj=poly[j][0], yj=poly[j][1];
+    const intersect = ((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi);
+    if(intersect) inside=!inside;
+  }
+  return inside;
+}
+const OUTLINE_CENTROID = OUTLINE_PTS.reduce((a,p)=>[a[0]+p[0]/OUTLINE_PTS.length, a[1]+p[1]/OUTLINE_PTS.length],[0,0]);
+function clampToOutline(x,y){
+  if(pointInPolygon(x,y,OUTLINE_PTS)) return [x,y];
+  let cx=x, cy=y;
+  for(let i=0;i<25;i++){
+    cx = cx + (OUTLINE_CENTROID[0]-cx)*0.08;
+    cy = cy + (OUTLINE_CENTROID[1]-cy)*0.08;
+    if(pointInPolygon(cx,cy,OUTLINE_PTS)) break;
+  }
+  return [cx,cy];
+}
+
+// ---------- Map: year range + flat-type + metric toggle state ----------
+const DATA_YEAR_MIN = Math.min(...SG_YEAR.map(r=>r[F.YEAR]));
+const DATA_YEAR_MAX = Math.max(...SG_YEAR.map(r=>r[F.YEAR]));
+let mapYl = DATA_YEAR_MIN, mapYh = DATA_YEAR_MAX;
+let currentMapMetric = 'price';
+let globalSelectedTypes = MASTER_FLAT_TYPES.slice(); // shared by map, compare table, and the per-town street list
+
+// Stark single-hue scale (light -> dark = low -> high), 5 classes, quantile-binned per
+// metric+range. Chosen after the original 2-hue teal/amber gradient (and later a 5-hue
+// blue-red scale) both proved hard to read at a glance -- one hue ramping from very light
+// to very dark reads as an unambiguous "low to high" intensity gradient.
+const PALETTE_5 = ['#DCEEEA','#9FD3C7','#4FA895','#0E7C6B','#054A3F'];
+function quantileBreaks(values, k){
+  const v = values.filter(x=>x!=null).slice().sort((a,b)=>a-b);
+  if(!v.length) return null;
+  const breaks=[];
+  for(let i=0;i<=k;i++){
+    const idx = Math.min(v.length-1, Math.round(i/k*(v.length-1)));
+    breaks.push(v[idx]);
+  }
+  return breaks;
+}
+function bucketIndex(val, breaks){
+  if(val==null || !breaks) return -1;
+  for(let i=0;i<breaks.length-1;i++){
+    if(val<=breaks[i+1]) return i;
+  }
+  return breaks.length-2;
+}
+
+const mapYrLow=document.getElementById('mapYrLow'), mapYrHigh=document.getElementById('mapYrHigh');
+mapYrLow.min=DATA_YEAR_MIN; mapYrLow.max=DATA_YEAR_MAX; mapYrLow.value=DATA_YEAR_MIN;
+mapYrHigh.min=DATA_YEAR_MIN; mapYrHigh.max=DATA_YEAR_MAX; mapYrHigh.value=DATA_YEAR_MAX;
+// Holds the currently-open street/town/nationwide detail view's own refresh function (set
+// by selectSeries below), so a global statMode change can refresh its mini-stats and chart
+// in place WITHOUT resetting that view's own year/lease/price sliders or flat-type pills.
+let currentSeriesUpdate = null;
+function refreshEverything(){
+  renderMap();
+  if(compareBuilt) renderCompareTable();
+  if(viewMode==='list' && activeTown) selectTown(activeTown, currentBarMetric);
+  if(viewMode==='series' && currentSeriesUpdate) currentSeriesUpdate();
+}
+const statModePillsEl = document.getElementById('statModePills');
+STAT_MODES.forEach(mode=>{
+  const p = document.createElement('span');
+  p.className = 'pill'+(mode===globalStatMode?' on':'');
+  p.dataset.mode = mode;
+  p.textContent = STAT_MODE_LABELS[mode];
+  p.addEventListener('click', ()=>{
+    document.querySelectorAll('#statModePills .pill').forEach(x=>x.classList.remove('on'));
+    p.classList.add('on');
+    globalStatMode = mode;
+    refreshEverything();
+  });
+  statModePillsEl.appendChild(p);
+});
+const mapTypePillsEl = document.getElementById('mapTypePills');
+MASTER_FLAT_TYPES.forEach(ft=>{
+  const p = document.createElement('span');
+  p.className = 'pill on';
+  p.dataset.type = ft;
+  p.textContent = ft;
+  p.addEventListener('click', ()=>{
+    p.classList.toggle('on');
+    const on = [...document.querySelectorAll('#mapTypePills .pill.on')].map(x=>x.dataset.type);
+    globalSelectedTypes = on.length ? on : MASTER_FLAT_TYPES.slice(); // never allow zero selected
+    if(!on.length) document.querySelectorAll('#mapTypePills .pill').forEach(x=>x.classList.add('on'));
+    refreshEverything();
+  });
+  mapTypePillsEl.appendChild(p);
+});
+const mapMetricPillsEl = document.getElementById('mapMetricPills');
+MAP_METRICS.forEach(k=>{
+  const p = document.createElement('span');
+  p.className = 'pill'+(k===currentMapMetric?' on':'');
+  p.dataset.metric = k;
+  p.textContent = RM[k].label;
+  p.addEventListener('click', ()=>{
+    document.querySelectorAll('#mapMetricPills .pill').forEach(x=>x.classList.remove('on'));
+    p.classList.add('on');
+    currentMapMetric = k;
+    renderMap();
+  });
+  mapMetricPillsEl.appendChild(p);
+});
+function updateMapYrLbl(){ document.getElementById('mapYrLbl').textContent = `${mapYl} – ${mapYh}`; }
+[mapYrLow, mapYrHigh].forEach(el=>el.addEventListener('input', ()=>{
+  let lo=+mapYrLow.value, hi=+mapYrHigh.value; if(lo>hi)[lo,hi]=[hi,lo];
+  mapYl=lo; mapYh=hi; updateMapYrLbl();
+  refreshEverything();
+}));
+updateMapYrLbl();
+
+const svg = document.getElementById('map');
+let activeTown=null, activeMode=null; // activeMode: 'town' | 'sg'
+let viewMode='none'; // 'none' | 'list' | 'series'
+let currentBarMetric='velocity';
+
+function renderMap(){
+  svg.innerHTML='';
+  const outlinePath = OUTLINE_PTS.map(([x,y],i)=> (i===0?'M':'L')+x+','+y).join(' ')+' Z';
+  const land = document.createElementNS('http://www.w3.org/2000/svg','path');
+  land.setAttribute('d', outlinePath); land.setAttribute('class','sg-land');
+  svg.appendChild(land);
+
+  const rm = RM[currentMapMetric];
+  const towns = Object.keys(TOWN_COORDS);
+  const combinedByTown = {};
+  towns.forEach(t=>{ combinedByTown[t] = combinedForSelection(TOWN_YEAR[t], TOWN_AGG[t], globalSelectedTypes); });
+  const colorVals = {}, sizeVals = {};
+  towns.forEach(t=>{
+    colorVals[t] = rm.compute(combinedByTown[t], mapYl, mapYh);
+    sizeVals[t] = RM.velocity.compute(combinedByTown[t], mapYl, mapYh);
+  });
+  const breaks = quantileBreaks(Object.values(colorVals), 5);
+  const sizeNums = Object.values(sizeVals).filter(x=>x!=null);
+  const sMin = sizeNums.length?Math.min(...sizeNums):0, sMax = sizeNums.length?Math.max(...sizeNums):1;
+
+  towns.forEach(town=>{
+    const [lat,lon] = TOWN_COORDS[town];
+    let [x,y]=project(lat,lon);
+    [x,y] = clampToOutline(x,y);
+    const sv = sizeVals[town];
+    const hasSize = sv!=null;
+    // Circle size is ALWAYS transactions/yr in the selected range -- more pronounced scaling
+    // than a subtle map needs, per explicit request.
+    const r = hasSize ? 7 + 24*((sv-sMin)/((sMax-sMin)||1)) : 6;
+    const cv = colorVals[town];
+    const hasColor = cv!=null;
+    const bIdx = hasColor ? bucketIndex(cv, breaks) : -1;
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r',r.toFixed(1));
+    c.setAttribute('fill', hasColor ? PALETTE_5[Math.max(0,bIdx)] : 'var(--ink-soft)');
+    if(!hasColor || !hasSize) c.setAttribute('stroke-dasharray','2 1.5');
+    c.setAttribute('fill-opacity', town===activeTown?'0.95':(hasColor?'0.82':'0.45'));
+    c.setAttribute('stroke', town===activeTown? 'var(--ink)':'rgba(0,0,0,.25)'); c.setAttribute('stroke-width', town===activeTown?'1.8':'0.6');
+    c.classList.add('town-dot');
+    c.addEventListener('click',()=>selectTown(town));
+    const titleEl = document.createElementNS('http://www.w3.org/2000/svg','title');
+    titleEl.textContent = `${town}: ${rm.label} ${rm.fmt(cv)} · ${RM.velocity.fmt(sv)} (${mapYl}–${mapYh})`;
+    c.appendChild(titleEl);
+    svg.appendChild(c);
+    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('x',x); label.setAttribute('y', y - r - 3);
+    label.setAttribute('text-anchor','middle');
+    label.classList.add('town-label'); if(town===activeTown) label.classList.add('active');
+    label.textContent = town.length>14 ? town.slice(0,13)+'…' : town;
+    svg.appendChild(label);
+  });
+
+  const sgG = document.createElementNS('http://www.w3.org/2000/svg','g');
+  sgG.classList.add('sg-marker'); if(activeMode==='sg') sgG.classList.add('active');
+  const sgCx=580, sgCy=446;
+  sgG.innerHTML = `<circle cx="${sgCx}" cy="${sgCy}" r="16"></circle><text x="${sgCx-56}" y="${sgCy+3}" text-anchor="start">All Singapore ▸</text>`;
+  sgG.addEventListener('click', selectSG);
+  svg.appendChild(sgG);
+
+  // Legend: stark single-hue bar. Numbers at the 4 internal seams (a swatch's range is
+  // implicitly between its neighbors) PLUS the two overall endpoints (min/max), styled
+  // smaller/lighter so they don't compete with the 4 primary seam labels -- without them,
+  // there was no way to read off the overall low/high of what's being shown.
+  const legendEl = document.getElementById('legendSwatches');
+  if(breaks){
+    let barHtml = `<div class="bar-row">` + PALETTE_5.map(c=>`<div class="seg" style="background:${c}"></div>`).join('') + `</div>`;
+    let labHtml = `<div class="lab-row">`;
+    labHtml += `<div class="lab end" style="left:0%; transform:translateX(0%);">${legendFmt(currentMapMetric,breaks[0])}</div>`;
+    for(let i=1;i<5;i++){
+      labHtml += `<div class="lab" style="left:${i*20}%;">${legendFmt(currentMapMetric,breaks[i])}</div>`;
+    }
+    labHtml += `<div class="lab end" style="left:100%; transform:translateX(-100%);">${legendFmt(currentMapMetric,breaks[5])}</div>`;
+    labHtml += `</div>`;
+    legendEl.innerHTML = `<div style="font-weight:600;color:var(--ink);margin-bottom:5px;">${rm.label} — lighter = lower, darker = higher</div>` + barHtml + labHtml;
+  } else {
+    legendEl.innerHTML = '<span>No data for the selected flat types in this range.</span>';
+  }
+  document.getElementById('legendNote').textContent = `Circle size = transactions/yr, ${mapYl}–${mapYh} (larger = more active market). Quantile-binned into 5 classes so the spread of towns is visible even when values cluster. Flat types: ${globalSelectedTypes.length===MASTER_FLAT_TYPES.length?'all':globalSelectedTypes.join(', ')}.`;
+}
+renderMap();
+
+const rightTitle=document.getElementById('rightTitle');
+const rightBody=document.getElementById('rightBody');
+const crumbs=document.getElementById('crumbs');
+let chart=null;
+const FT_COLORS = {'1 ROOM':'#8FA0A0','2 ROOM':'#3FCBB0','3 ROOM':'#0E7C6B','4 ROOM':'#E8A94E','5 ROOM':'#C97A2B','EXECUTIVE':'#B0562E','MULTI-GENERATION':'#7A4FBE'};
+const METRICS = {
+  price: {get label(){return `${STAT_MODE_LABELS[globalStatMode]} price`;}, field:()=>dimField('PRICE',globalStatMode), fmt:v=>'$'+(v/1000).toFixed(0)+'k', type:'line'},
+  psf:   {get label(){return `${STAT_MODE_LABELS[globalStatMode]} $psf`;},  field:()=>dimField('PSF',globalStatMode),   fmt:v=>'$'+v.toFixed(0), type:'line'},
+  range: {label:'Price range (min–max)', field:()=>F.PRICE_MEAN, fmt:v=>'$'+(v/1000).toFixed(0)+'k', type:'range'},
+  volume:{label:'Transaction volume', field:()=>F.N, fmt:v=>v+' tx', type:'bar'},
+};
+
+function totalN(byFt){ let n=0; Object.values(byFt).forEach(arr=>arr.forEach(r=>n+=r[F.N])); return n; }
+
+function selectTown(town, barMetric){
+  activeTown=town; activeMode=null; viewMode='list'; renderMap();
+  if(barMetric) currentBarMetric = barMetric;
+  rightTitle.textContent = town;
+  crumbs.innerHTML = `<button onclick="deselectTown()">All towns</button>`;
+
+  // Build the three row categories -- individual streets, the town average, and the
+  // Singapore average -- all measured on the SAME metric + SAME global year range + SAME
+  // flat-type selection so they're directly comparable on one bar scale.
+  const streetNames = Object.keys(STREET_YEAR[town]||{});
+  const streetCombined = {};
+  streetNames.forEach(s=>{ streetCombined[s] = combinedForSelection(STREET_YEAR[town][s], STREET_DATA[town][s], globalSelectedTypes); });
+  const rows = streetNames.map(s=>({
+    key:s,
+    val: RM[currentBarMetric].compute(streetCombined[s], mapYl, mapYh),
+    n: sumN(filterRange(streetCombined[s], mapYl, mapYh)),
+  })).filter(r=>r.val!=null);
+  rows.sort((a,b)=>b.val-a.val);
+
+  const townCombined = combinedForSelection(TOWN_YEAR[town], TOWN_AGG[town], globalSelectedTypes);
+  const sgCombined = combinedForSelection(SG_YEAR, SG_AGG, globalSelectedTypes);
+  const townVal = RM[currentBarMetric].compute(townCombined, mapYl, mapYh);
+  const townN = sumN(filterRange(townCombined, mapYl, mapYh));
+  const sgVal = RM[currentBarMetric].compute(sgCombined, mapYl, mapYh);
+  const sgN = sumN(filterRange(sgCombined, mapYl, mapYh));
+
+  const allTownEntries = Object.keys(TOWN_YEAR).map(t=>{
+    const c = combinedForSelection(TOWN_YEAR[t], TOWN_AGG[t], globalSelectedTypes);
+    return {t, v:RM[currentBarMetric].compute(c,mapYl,mapYh)};
+  }).filter(e=>e.v!=null);
+  allTownEntries.sort((a,b)=>b.v-a.v);
+  const townRank = allTownEntries.findIndex(e=>e.t===town)+1;
+
+  // Scale bars off the STREETS' own range only. Singapore's (and sometimes the town's)
+  // aggregate value can be a genuine outlier relative to any single street -- nationwide
+  // velocity is a sum across all 27 towns, so it dwarfs even the busiest single street;
+  // nationwide "lowest price" is an all-time low across everything, which can sit well
+  // below any one town's own low. Including those in the same min-max scale as the
+  // streets was squashing every street bar toward one end. Instead: normalize against
+  // the streets, and let a benchmark row's bar cap out at the edge when it's genuinely
+  // off that scale (still informative -- "off the street scale entirely" is real signal).
+  const streetVals = rows.map(r=>r.val).filter(v=>v!=null);
+  const vMin = streetVals.length?Math.min(...streetVals):0, vMax = streetVals.length?Math.max(...streetVals):1;
+  function barPct(v){ if(v==null) return 0; return Math.min(100, Math.max(2, Math.round(100*(v-vMin)/((vMax-vMin)||1)))); }
+
+  const typeNote = globalSelectedTypes.length===MASTER_FLAT_TYPES.length ? 'all flat types' : globalSelectedTypes.join(', ');
+  let html = `<div style="font-size:10.5px;color:var(--ink-soft);margin-bottom:6px;">Ranked by: ${typeNote} · ${mapYl}–${mapYh} <span style="opacity:.8;">(change these above, on the map). Bars are shown for streets only, scaled to their own range — the two benchmark rows above show the number without a bar, since Singapore's and the town's totals are on a different scale (e.g. nationwide transaction volume vastly exceeds any single street's) and would otherwise distort the street-to-street comparison.</span></div>`;
+  html += `<div class="metric-pills" id="barMetricPills" style="margin-bottom:10px;">`;
+  BAR_METRICS.forEach(k=>{ html += `<span class="pill${k===currentBarMetric?' on':''}" data-metric="${k}">${RM[k].label}</span>`; });
+  html += `</div><div id="streetlist">`;
+  html += `<div class="street-row sgrow" data-sg="1"><div class="toprow"><span class="name">▸ All Singapore (average)</span><span class="n">${RM[currentBarMetric].fmt(sgVal)} · ${sgN.toLocaleString()} tx</span></div></div>`;
+  html += `<div class="street-row avgrow" data-avg="1"><div class="toprow"><span class="name">▸ Whole ${town} (average)</span><span class="n">${RM[currentBarMetric].fmt(townVal)} · #${townRank||'—'} of ${allTownEntries.length} towns</span></div></div>`;
+  rows.forEach(({key,val,n})=>{
+    html += `<div class="street-row" data-s="${key}">
+      <div class="toprow"><span class="name">${key}</span><span class="n">${RM[currentBarMetric].fmt(val)} · ${n.toLocaleString()} tx</span></div>
+      <div class="velobar"><i style="width:${barPct(val)}%"></i></div>
+    </div>`;
+  });
+  html += `</div>`;
+  rightBody.innerHTML = html;
+
+  document.querySelectorAll('#barMetricPills .pill').forEach(p=>p.addEventListener('click',()=>selectTown(town, p.dataset.metric)));
+
+  rightBody.querySelector('[data-sg]').addEventListener('click', ()=>selectSeries('All Singapore',
+    `<button onclick="deselectTown()">All towns</button><span class="sep">/</span>All Singapore (average)`,
+    SG_AGG, SG_YEAR, {level:'sg'}));
+  rightBody.querySelector('[data-avg]').addEventListener('click', ()=>selectSeries('Whole '+town+' (average)',
+    `<button onclick="deselectTown()">All towns</button><span class="sep">/</span>${town} average`,
+    TOWN_AGG[town], TOWN_YEAR[town], {level:'town', town}));
+  rightBody.querySelectorAll('.street-row[data-s]').forEach(row=>{
+    row.addEventListener('click',()=>{
+      const street = row.dataset.s;
+      selectSeries(street,
+        `<button onclick="deselectTown()">All towns</button><span class="sep">/</span><button onclick="selectTown('${town}')">${town}</button><span class="sep">/</span>${street}`,
+        STREET_DATA[town][street], STREET_YEAR[town][street], {level:'street', town, street});
+    });
+  });
+}
+function deselectTown(){
+  activeTown=null; activeMode=null; viewMode='none'; renderMap();
+  rightTitle.textContent='Select a town'; crumbs.innerHTML='';
+  rightBody.innerHTML = '<div class="empty">Click a town on the map to see its streets, or click the dashed "All Singapore" circle for the nationwide picture.</div>';
+}
+window.deselectTown = deselectTown;
+window.selectTown = selectTown;
+
+function selectSG(){
+  activeTown=null; activeMode='sg'; viewMode='series'; renderMap();
+  rightTitle.textContent = 'All Singapore';
+  crumbs.innerHTML = `<button onclick="deselectTown()">All towns</button><span class="sep">/</span>All Singapore (average)`;
+  selectSeries('All Singapore', crumbs.innerHTML, SG_AGG, SG_YEAR, {level:'sg'});
+}
+window.selectSG = selectSG;
+
+function statLine(big, small, rankStr){
+  return `<div class="m"><b>${big}</b>${small}${rankStr?`<span class="rankTag">${rankStr}</span>`:''}</div>`;
+}
+
+function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
+  viewMode='series';
+  rightTitle.textContent = title;
+  crumbs.innerHTML = breadcrumbHtml;
+
+  const flatTypes = Object.keys(byFt);
+  // Default the pills to whatever's currently selected globally (map/town-list flat-type
+  // toggle), intersected with what this entity actually has -- so a filter set upstream
+  // carries through, but falls back to "all types" if that would leave nothing selected.
+  const defaultOn = flatTypes.filter(ft=>globalSelectedTypes.includes(ft));
+  const initiallyOn = defaultOn.length ? defaultOn : flatTypes;
+  let allYears=new Set(), allLease=[], allPrice=[];
+  // NOTE: these two filter sliders deliberately always use MEAN price/lease regardless of
+  // the global Statistic toggle, since they're a simple filter on the underlying yearly
+  // records to narrow the chart/table -- not one of the toggleable "stats shown". Re-reading
+  // their bounds/label on every statMode change would be extra complexity for little benefit
+  // here; the label says so explicitly to avoid confusion.
+  flatTypes.forEach(ft=>byFt[ft].forEach(r=>{ allYears.add(r[F.YEAR]); allLease.push(r[F.LEASE_MEAN]); allPrice.push(r[F.PRICE_MEAN]); }));
+  (combinedRecords||[]).forEach(r=>allYears.add(r[F.YEAR]));
+  const years = [...allYears].sort((a,b)=>a-b);
+  const yMin=years[0], yMax=years[years.length-1];
+  const lMin=Math.floor(Math.min(...allLease)), lMax=Math.ceil(Math.max(...allLease));
+  const prMin=Math.floor(Math.min(...allPrice)/1000)*1000, prMax=Math.ceil(Math.max(...allPrice)/1000)*1000;
+
+  let html = `<div class="filters">
+    <div class="rowflex">
+      <div class="filter-row" style="flex:1"><label>Flat type (also drives the mini-stats &amp; ranks below)</label><div class="pills" id="ftPills">`;
+  flatTypes.forEach(ft=>{ html += `<span class="pill${initiallyOn.includes(ft)?' on':''}" data-ft="${ft}">${ft}</span>`; });
+  html += `</div></div>
+      <div class="filter-row"><label>Chart view</label>
+        <select class="metricSel" id="metricSel">
+          ${Object.entries(METRICS).map(([k,m])=>`<option value="${k}">${m.label}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="rowflex">
+      <div class="filter-row" style="flex:1"><label>Year range (drives everything below, including the mini-stats and ranks) <span id="yrLbl"></span></label>
+        <div class="rangewrap"><input type="range" id="yrLow" min="${yMin}" max="${yMax}" value="${yMin}">
+        <input type="range" id="yrHigh" min="${yMin}" max="${yMax}" value="${yMax}"></div></div>
+    </div>
+    <div class="rowflex">
+      <div class="filter-row" style="flex:1"><label>Remaining lease, years — mean-based filter, chart/table only, independent of Statistic toggle above <span id="leaseLbl"></span></label>
+        <div class="rangewrap"><input type="range" id="leaseLow" min="${lMin}" max="${lMax}" value="${lMin}">
+        <input type="range" id="leaseHigh" min="${lMin}" max="${lMax}" value="${lMax}"></div></div>
+    </div>
+    <div class="rowflex">
+      <div class="filter-row" style="flex:1"><label>Mean price, S$ — filter, chart/table only, independent of Statistic toggle above <span id="priceLbl"></span></label>
+        <div class="rangewrap"><input type="range" id="prLow" min="${prMin}" max="${prMax}" step="1000" value="${prMin}">
+        <input type="range" id="prHigh" min="${prMin}" max="${prMax}" step="1000" value="${prMax}"></div></div>
+    </div>
+
+    <div class="rowflex"><button class="reset" id="resetBtn">Reset filters</button></div>
+  </div>
+  <div class="chartbox"><canvas id="chartCanvas"></canvas></div>
+  <div class="miniStats-sub">All figures below reflect the flat types currently toggled on above (approximated when it's a partial selection — see footnote) and the year range below.</div>
+  <div class="miniStats" id="miniStats"></div>
+  <button class="tableToggle" id="tableToggle">Show data table</button>
+  <div class="tablewrap" id="tablewrap"><table class="datatable" id="datatable"></table></div>`;
+  rightBody.innerHTML = html;
+
+  const els = ['yrLow','yrHigh','leaseLow','leaseHigh','prLow','prHigh'].reduce((o,id)=>(o[id]=document.getElementById(id),o),{});
+  const metricSel = document.getElementById('metricSel');
+  document.querySelectorAll('#ftPills .pill').forEach(p=>p.addEventListener('click',()=>{ p.classList.toggle('on'); update(); }));
+  Object.values(els).forEach(el=>el.addEventListener('input', update));
+  metricSel.addEventListener('change', update);
+  document.getElementById('resetBtn').addEventListener('click',()=>{
+    els.yrLow.value=yMin; els.yrHigh.value=yMax; els.leaseLow.value=lMin; els.leaseHigh.value=lMax; els.prLow.value=prMin; els.prHigh.value=prMax;
+    document.querySelectorAll('#ftPills .pill').forEach(p=>p.classList.add('on'));
+    update();
+  });
+  const tableToggle = document.getElementById('tableToggle');
+  const tablewrap = document.getElementById('tablewrap');
+  tableToggle.addEventListener('click',()=>{
+    tablewrap.classList.toggle('show');
+    tableToggle.textContent = tablewrap.classList.contains('show') ? 'Hide data table' : 'Show data table';
+  });
+
+  function getFiltered(){
+    let yl=+els.yrLow.value, yh=+els.yrHigh.value; if(yl>yh)[yl,yh]=[yh,yl];
+    let ll=+els.leaseLow.value, lh=+els.leaseHigh.value; if(ll>lh)[ll,lh]=[lh,ll];
+    let pl=+els.prLow.value, ph=+els.prHigh.value; if(pl>ph)[pl,ph]=[ph,pl];
+    const activeFts = [...document.querySelectorAll('#ftPills .pill.on')].map(p=>p.dataset.ft);
+    const rows = [];
+    activeFts.forEach(ft=>{
+      byFt[ft].filter(r=> r[F.YEAR]>=yl && r[F.YEAR]<=yh && r[F.LEASE_MEAN]>=ll && r[F.LEASE_MEAN]<=lh && r[F.PRICE_MEAN]>=pl && r[F.PRICE_MEAN]<=ph)
+        .sort((a,b)=>a[F.YEAR]-b[F.YEAR])
+        .forEach(r=>rows.push({ft, r}));
+    });
+    return {yl,yh,activeFts,rows};
+  }
+
+  function update(){
+    const {yl,yh,activeFts,rows} = getFiltered();
+    document.getElementById('yrLbl').textContent = `${yl} – ${yh}`;
+    document.getElementById('leaseLbl').textContent = `${els.leaseLow.value} – ${els.leaseHigh.value}`;
+    document.getElementById('priceLbl').textContent = `${(els.prLow.value/1000).toFixed(0)}k – ${(els.prHigh.value/1000).toFixed(0)}k`;
+
+    const metricKey = metricSel.value;
+    const metric = METRICS[metricKey];
+    drawChart(rows, activeFts, metric, yl, yh);
+    renderTable(rows);
+
+    // Chart-metric-specific % change (depends on the flat types currently toggled on
+    // and the chart view chosen -- kept separate from the combined stats below).
+    let first=null, last=null;
+    rows.forEach(({r})=>{ if(first===null||r[F.YEAR]<first[F.YEAR]) first=r; if(last===null||r[F.YEAR]>last[F.YEAR]) last=r; });
+    const mFieldIdx = metric.field();
+    const chg = (first&&last&&first[F.YEAR]!==last[F.YEAR])? (((last[mFieldIdx]-first[mFieldIdx])/first[mFieldIdx])*100).toFixed(1) : null;
+
+    // Mini-stats + ranks now follow the SAME flat-type pills as the chart (activeFts),
+    // combined via combinedForSelection: exact precomputed data when every type this
+    // entity has is toggled on, an approximated combine (see footnote) when it's a
+    // genuine subset. Same [yl,yh] as the chart's own slider. Every price/lease/psf/area
+    // figure also follows the global Statistic toggle (median/mean/lowest/highest).
+    const cr = combinedForSelection(combinedRecords, byFt, activeFts);
+    const crIn = filterRange(cr, yl, yh);
+    const totalNrCombined = sumN(crIn);
+    const vVelocity = RM.velocity.compute(cr, yl, yh);
+    const vPrice = RM.price.compute(cr, yl, yh);
+    const vLease = RM.lease.compute(cr, yl, yh);
+    const vPsf = RM.psf.compute(cr, yl, yh);
+    const vArea = RM.area.compute(cr, yl, yh);
+    const vCagrPrice = RM.cagr_price.compute(cr, yl, yh);
+    const vCagrPsf = RM.cagr_psf.compute(cr, yl, yh);
+    const vGrowth = RM.growth_price.compute(cr, yl, yh);
+    const typeNote = activeFts.length===flatTypes.length ? 'all flat types' : activeFts.join(', ');
+
+    document.getElementById('miniStats').innerHTML =
+      statLine(`${totalNrCombined.toLocaleString()} tx`, `transactions in range (${typeNote})`, computeRank('velocity',yl,yh,rankCtx,activeFts)) +
+      statLine(RM.velocity.fmt(vVelocity), 'velocity (tx/yr)', computeRank('velocity',yl,yh,rankCtx,activeFts)) +
+      statLine(RM.price.fmt(vPrice), RM.price.label.toLowerCase(), computeRank('price',yl,yh,rankCtx,activeFts)) +
+      statLine(RM.psf.fmt(vPsf), RM.psf.label.toLowerCase()+' (weighted)', computeRank('psf',yl,yh,rankCtx,activeFts)) +
+      statLine(RM.area.fmt(vArea), RM.area.label.toLowerCase(), computeRank('area',yl,yh,rankCtx,activeFts)) +
+      statLine(RM.lease.fmt(vLease), RM.lease.label.toLowerCase(), computeRank('lease',yl,yh,rankCtx,activeFts)) +
+      statLine(RM.cagr_price.fmt(vCagrPrice), RM.cagr_price.label.toLowerCase(), computeRank('cagr_price',yl,yh,rankCtx,activeFts)) +
+      statLine(RM.cagr_psf.fmt(vCagrPsf), RM.cagr_psf.label.toLowerCase(), computeRank('cagr_psf',yl,yh,rankCtx,activeFts)) +
+      statLine(RM.growth_price.fmt(vGrowth), RM.growth_price.label.toLowerCase(), computeRank('growth_price',yl,yh,rankCtx,activeFts)) +
+      statLine(chg!==null? (chg>0?'+':'')+chg+'%':'—', `${metric.label} change (chart view), ${yl}→${yh}`, '');
+  }
+  currentSeriesUpdate = update;
+
+  function renderTable(rows){
+    const cols = ['Year','Flat type','Tx','Median $psf','Median price','Avg price','Min price','Max price','Avg sqm','Avg sqft','Avg lease left'];
+    let html = '<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+    rows.slice().sort((a,b)=> a.r[F.YEAR]-b.r[F.YEAR] || a.ft.localeCompare(b.ft)).forEach(({ft,r})=>{
+      html += `<tr><td>${r[F.YEAR]}</td><td>${ft}</td><td>${r[F.N]}</td><td>$${r[F.PSF_MEDIAN].toFixed(0)}</td><td>$${r[F.PRICE_MEDIAN].toLocaleString()}</td><td>$${r[F.PRICE_MEAN].toLocaleString()}</td><td>$${r[F.PRICE_MIN].toLocaleString()}</td><td>$${r[F.PRICE_MAX].toLocaleString()}</td><td>${r[F.AREA_MEAN]}</td><td>${sqft(r[F.AREA_MEAN])}</td><td>${r[F.LEASE_MEAN]}y</td></tr>`;
+    });
+    html += '</tbody>';
+    document.getElementById('datatable').innerHTML = html;
+  }
+
+  function drawChart(rows, activeFts, metric, yl, yh){
+    const ctx = document.getElementById('chartCanvas').getContext('2d');
+    if(chart) chart.destroy();
+    const css = getComputedStyle(document.documentElement);
+    const inkSoft = css.getPropertyValue('--ink-soft').trim();
+    const gridCol = css.getPropertyValue('--grid').trim();
+    const inkCol = css.getPropertyValue('--ink').trim();
+
+    let datasets = [];
+    if(metric.type==='range'){
+      activeFts.forEach(ft=>{
+        const sub = rows.filter(x=>x.ft===ft);
+        const ptsMax = sub.map(({r})=>({x:r[F.YEAR], y:r[F.PRICE_MAX], n:r[F.N]}));
+        const ptsMin = sub.map(({r})=>({x:r[F.YEAR], y:r[F.PRICE_MIN], n:r[F.N]}));
+        datasets.push({label:ft+' max', data:ptsMax, borderColor:FT_COLORS[ft]||'#999', backgroundColor:(FT_COLORS[ft]||'#999')+'33', fill:'+1', pointRadius:2, borderWidth:1, tension:.2});
+        datasets.push({label:ft+' min', data:ptsMin, borderColor:FT_COLORS[ft]||'#999', backgroundColor:'transparent', fill:false, pointRadius:2, borderWidth:1, tension:.2});
+      });
+    } else {
+      const fieldIdx = metric.field();
+      // The auxiliary psf/area/lease shown in the tooltip now follow the SAME Statistic
+      // toggle as the main plotted line -- previously these were silently hardcoded to
+      // median psf / mean area / mean lease regardless of what mode was selected, which
+      // would have shown e.g. a median $psf in a tooltip for a "Lowest price" chart.
+      datasets = activeFts.map(ft=>{
+        const pts = rows.filter(x=>x.ft===ft).map(({r})=>({
+          x:r[F.YEAR], y:r[fieldIdx], n:r[F.N],
+          lease:r[dimField('LEASE',globalStatMode)], area:r[dimField('AREA',globalStatMode)], psf:r[dimField('PSF',globalStatMode)],
+        }));
+        return {
+          label: ft, data: pts, borderColor: FT_COLORS[ft]||'#999', backgroundColor: FT_COLORS[ft]||'#999',
+          tension:.25, spanGaps:true, pointRadius: metric.type==='bar'?0:4, pointHoverRadius:6, borderWidth:2,
+          type: metric.type==='bar'?'bar':'line'
+        };
+      });
+    }
+
+    // What "n" means next to a figure depends on the Statistic mode: for median/mean it's
+    // "this average/median was computed from n transactions" (a confidence signal -- an
+    // average of 2 means much less than an average of 200). For lowest/highest, the figure
+    // IS one single real transaction's price, and n is "that was the floor/ceiling AMONG n
+    // transactions" -- a different thing, and worth saying explicitly so "n=23" next to a
+    // single lowest-price transaction doesn't read as "23 transactions at this price".
+    function nContext(n){
+      if(globalStatMode==='low') return `lowest of ${n} tx`;
+      if(globalStatMode==='high') return `highest of ${n} tx`;
+      return `n=${n}`;
+    }
+
+    chart = new Chart(ctx, {
+      type: metric.type==='bar' ? 'bar' : 'line',
+      data:{ datasets },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        interaction:{mode:'nearest', intersect:false},
+        scales:{
+          x:{ type:'linear', min:yl, max:yh, ticks:{stepSize:1, precision:0, color: inkSoft, callback:v=>String(v)}, grid:{color: gridCol} },
+          y:{ ticks:{ color: inkSoft, callback:v=> metric.fmt(v) }, grid:{color: gridCol} }
+        },
+        plugins:{
+          legend:{ display: datasets.length>1, labels:{color: inkCol, filter:(item)=> metric.type!=='range' || !item.text.endsWith(' min') } },
+          tooltip:{ callbacks:{ label:(c)=>{
+            const d=c.raw;
+            if(metric.type==='range') return `${c.dataset.label}: $${d.y.toLocaleString()} (of ${d.n} tx that year)`;
+            if(metric.type==='bar') return `${c.dataset.label}: ${d.y} tx`;
+            return `${c.dataset.label}: ${metric.fmt(d.y)} (${nContext(d.n)}, psf $${d.psf?.toFixed(0)}, ${d.area}sqm/${sqft(d.area)}sqft, ${d.lease}y left)`;
+          }}}
+        }
+      }
+    });
+  }
+  update();
+}
+
+// --- Township comparison table ---
+const compareToggle = document.getElementById('compareToggle');
+const comparePanel = document.getElementById('comparePanel');
+let compareBuilt = false, compareSort = {col:'velocity', dir:-1};
+compareToggle.addEventListener('click', ()=>{
+  comparePanel.classList.toggle('show');
+  compareToggle.textContent = comparePanel.classList.contains('show') ? 'Compare all townships ▴' : 'Compare all townships ▾';
+  if(!compareBuilt){ compareBuilt=true; }
+  renderCompareTable();
+});
+function streetsInRange(town){
+  const s = STREET_YEAR[town] || {}, sd = STREET_DATA[town] || {};
+  return Object.keys(s).filter(st=>filterRange(combinedForSelection(s[st], sd[st], globalSelectedTypes), mapYl, mapYh).length>0).length;
+}
+function townCombined(t){ return combinedForSelection(TOWN_YEAR[t], TOWN_AGG[t], globalSelectedTypes); }
+const COMPARE_COLS = [
+  {key:'town', label:'Town', get:t=>t, fmt:v=>v, numeric:false},
+  {key:'streets', label:'Streets active in range', get:t=>streetsInRange(t), fmt:v=>v},
+  {key:'total_n', label:'Total tx (range)', get:t=>sumN(filterRange(townCombined(t),mapYl,mapYh)), fmt:v=>v.toLocaleString()},
+  {key:'velocity', label:'Velocity, tx/yr', get:t=>RM.velocity.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.velocity.fmt(v)},
+  {get label(){return RM.price.label;}, key:'price', get:t=>RM.price.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.price.fmt(v)},
+  {get label(){return RM.psf.label;}, key:'psf', get:t=>RM.psf.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.psf.fmt(v)},
+  {get label(){return RM.lease.label;}, key:'lease', get:t=>RM.lease.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.lease.fmt(v)},
+  {get label(){return RM.cagr_price.label;}, key:'cagr_price', get:t=>RM.cagr_price.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.cagr_price.fmt(v)},
+  {get label(){return RM.cagr_psf.label;}, key:'cagr_psf', get:t=>RM.cagr_psf.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.cagr_psf.fmt(v)},
+  {get label(){return RM.growth_price.label;}, key:'growth_price', get:t=>RM.growth_price.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.growth_price.fmt(v)},
+];
+function renderCompareTable(){
+  const towns = Object.keys(TOWN_YEAR);
+  const rows = towns.map(t=>({t, vals: COMPARE_COLS.map(c=>c.get(t))}));
+  const colIdx = COMPARE_COLS.findIndex(c=>c.key===compareSort.col);
+  rows.sort((a,b)=>{
+    const av=a.vals[colIdx], bv=b.vals[colIdx];
+    if(av==null && bv==null) return 0;
+    if(av==null) return 1;
+    if(bv==null) return -1;
+    if(typeof av==='string') return compareSort.dir*av.localeCompare(bv);
+    return compareSort.dir*(av-bv);
+  });
+  let html = '<thead><tr>'+COMPARE_COLS.map(c=>`<th data-key="${c.key}" style="cursor:pointer;text-align:${c.numeric===false?'left':'right'}">${c.label}${compareSort.col===c.key?(compareSort.dir<0?' \u25bc':' \u25b2'):''}</th>`).join('')+'</tr></thead><tbody>';
+  rows.forEach(({t,vals})=>{
+    html += '<tr>'+vals.map((v,i)=>`<td style="text-align:${COMPARE_COLS[i].numeric===false?'left':'right'}">${COMPARE_COLS[i].fmt(v)}</td>`).join('')+'</tr>';
+  });
+  html += '</tbody>';
+  const table = document.getElementById('compareTable');
+  table.innerHTML = html;
+  table.querySelectorAll('th').forEach(th=>th.addEventListener('click',()=>{
+    const key = th.dataset.key;
+    if(compareSort.col===key) compareSort.dir *= -1; else compareSort = {col:key, dir: key==='town'?1:-1};
+    renderCompareTable();
+  }));
+}
+
+document.getElementById('footnote').innerHTML = `Prices are aggregated from registered resale transactions grouped by street (or town, or nationwide), flat type and year — not individual listings. $psf is computed per transaction then the median taken per group. Remaining-lease and price sliders inside a street/town view act on that yearly aggregate (chart &amp; data table only), so they can drop a whole year's point for a flat type rather than individual flats within it. <b>Flat-type selection</b>: when every flat type an entity actually has is toggled on (the default), all combined figures use the exact directly-computed data. When you deselect some flat types — on the map, in a town's street list, or in a street/town/nationwide detail view — the combined figures for transaction count, average price, lowest/highest price, average floor area and average lease are still exact (these recombine validly from per-flat-type aggregates); average $psf and the median shown in the data table are a transaction-count-weighted <em>approximation</em> across the selected types, since an exact combined median can't be reconstructed from per-type medians alone. <b>CAGR</b> (compound annual growth rate) is the steady <em>annual</em> rate implied by the first and last year with data in the selected range: (last/first)^(1/years)−1. <b>Total % growth</b> is simply (last/first−1) — the overall change across the period, <em>not</em> annualized; it will read higher than CAGR for any period longer than a year (e.g. 60% total growth over 10 years is roughly a 4.8%/yr CAGR) — showing both because they answer different questions. "Velocity" is transactions/year within whichever year range is currently selected. Covers all five data.gov.sg "Resale Flat Prices" era files (Approval Date 1990–1999, Approval Date 2000–Feb 2012, Registration Date Mar 2012–Dec 2014, Registration Date Jan 2015–Dec 2016, Registration Date Jan 2017 onwards), harmonized into one schema; the 2017-onwards portion is pulled live from the data.gov.sg API on every refresh (latest transaction month: __LATEST_MONTH__; page last rebuilt __BUILT_AT__). LIM CHU KANG is a small, now-defunct HDB town with only 63 transactions (1990–1998, one street) — included for completeness but will show as gray/dashed on the map for any year range after 1998.`;
+</script>
+</body>
+</html>
