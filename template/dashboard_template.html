@@ -133,7 +133,7 @@ table.datatable tr:hover td{background:var(--panel-2);}
 
   <button class="tableToggle" id="compareToggle" style="margin-bottom:16px;">Compare all townships ▾</button>
   <div class="panel tablewrap" id="comparePanel" style="max-height:520px; margin-bottom:18px;">
-    <div style="font-size:11px; color:var(--ink-soft); margin-bottom:8px;">Reflects the year range selected on the map below. Click a column to sort.</div>
+    <div style="font-size:11px; color:var(--ink-soft); margin-bottom:8px;">Reflects the period (years or quarters) selected on the map below. Click a column to sort.</div>
     <table class="datatable" id="compareTable"></table>
   </div>
 
@@ -151,6 +151,14 @@ table.datatable tr:hover td{background:var(--panel-2);}
           <input type="range" id="mapYrHigh" min="1990" max="2026" value="2026"></div>
         </div>
         <div>
+          <div class="lbl"><span>Timescale</span><span style="font-style:italic;">Auto = quarterly when the range is 5 years or less</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            <div class="metric-pills" id="mapTsPills"><span class="pill on" data-ts="auto">Auto</span><span class="pill" data-ts="year">Yearly</span><span class="pill" data-ts="quarter">Quarterly</span></div>
+            <span id="mapQRow" style="display:none;align-items:center;gap:6px"><select class="metricSel" id="mapQFrom"></select><span>to</span><select class="metricSel" id="mapQTo"></select></span>
+            <span id="mapTsStatus" style="font-size:11px;color:var(--ink-soft)"></span>
+          </div>
+        </div>
+        <div>
           <div class="lbl"><span>Flat types included</span><span style="font-style:italic;">applies to map, comparison table &amp; street rankings</span></div>
           <div class="metric-pills" id="mapTypePills"></div>
         </div>
@@ -162,7 +170,7 @@ table.datatable tr:hover td{background:var(--panel-2);}
       <svg id="map" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"></svg>
       <div class="legend-swatches" id="legendSwatches"></div>
       <div class="legend-note" id="legendNote"></div>
-      <div class="map-note">Coastline traced from a reference outline for orientation only, not a surveyed boundary; town positions are approximate centroids. Gray/dashed = no transactions for that town in the selected year range.</div>
+      <div class="map-note">Coastline traced from a reference outline for orientation only, not a surveyed boundary; town positions are approximate centroids. Gray/dashed = no transactions for that town in the selected period.</div>
     </div>
 
     <div class="panel">
@@ -227,7 +235,7 @@ function dimField(dim, mode){ return F[`${dim}_${STAT_FIELD_SUFFIX[mode]}`]; }
 // color toggle, the township comparison table, the per-street ranking bars, and the rank
 // badges in the street/town/nationwide detail panel -- so "price" means exactly the same
 // calculation everywhere in the dashboard (and always reflects the current statMode).
-function filterRange(records, yl, yh){ return (records||[]).filter(r=>r[F.YEAR]>=yl && r[F.YEAR]<=yh); }
+function filterRange(records, yl, yh){ return (records||[]).filter(r=>r[F.YEAR]>=yl-1e-9 && r[F.YEAR]<=yh+1e-9); }
 function sumN(records){ return records.reduce((a,r)=>a+r[F.N],0); }
 function weightedMean(records, fieldIdx){
   const n = sumN(records); if(!n) return null;
@@ -274,7 +282,7 @@ const DIM_FMT = {
   PSF:   v=>v==null?'—':'$'+v.toFixed(0),
 };
 const RM = {
-  velocity:    {label:'Transactions / yr', compute:(recs,yl,yh)=>{const f=filterRange(recs,yl,yh); const yrs=Math.max(1,yh-yl+1); return f.length? sumN(f)/yrs : null;}, fmt:v=>v==null?'—':v.toFixed(1)+'/yr'},
+  velocity:    {label:'Transactions / yr', compute:(recs,yl,yh,step=1)=>{const f=filterRange(recs,yl,yh); const yrs=Math.max(step,yh-yl+step); return f.length? sumN(f)/yrs : null;}, fmt:v=>v==null?'—':v.toFixed(1)+'/yr'},
   price:       {get label(){return `${STAT_MODE_LABELS[globalStatMode]} price`;},       compute:(recs,yl,yh)=>statValue('PRICE',recs,yl,yh), fmt:DIM_FMT.PRICE},
   lease:       {get label(){return `${STAT_MODE_LABELS[globalStatMode]} lease left`;},  compute:(recs,yl,yh)=>statValue('LEASE',recs,yl,yh), fmt:DIM_FMT.LEASE},
   psf:         {get label(){return `${STAT_MODE_LABELS[globalStatMode]} $psf`;},        compute:(recs,yl,yh)=>statValue('PSF',recs,yl,yh),   fmt:DIM_FMT.PSF},
@@ -497,13 +505,71 @@ MAP_METRICS.forEach(k=>{
   });
   mapMetricPillsEl.appendChild(p);
 });
-function updateMapYrLbl(){ document.getElementById('mapYrLbl').textContent = `${mapYl} – ${mapYh}`; }
+// ---- Map-level timescale: the map, comparison table and street bars share one period.
+// mapLo/mapHi are the effective bounds (fractional year keys when quarterly: 2024.25 = Q2),
+// mapStep is the period length in years (velocity = tx / span).
+let mapTs='auto', mapQState='idle', MAPQ=null;   // MAPQ = {towns:{town:{byFt,comb}}, sg:{byFt,comb}}
+let mapQuarterly=false, mapLo=mapYl, mapHi=mapYh, mapStep=1;
+const mapQFrom=document.getElementById('mapQFrom'), mapQTo=document.getElementById('mapQTo');
+let mapQYl=null, mapQYh=null;
+const _townQFiles = {};
+function loadTownQFile(town){
+  const file = Q_INDEX[town]; if(!file) return Promise.reject(new Error('no file'));
+  if(!_townQFiles[town]) _townQFiles[town] = loadQuarterly({level:'town', town}).then(()=>_qCache[file]).catch(e=>{ delete _townQFiles[town]; throw e; });
+  return _townQFiles[town];
+}
+const _townQReady = {};  // town -> full per-town quarterly object once loaded
+function mapWantQ(){ return mapTs==='quarter' || (mapTs==='auto' && (mapYh-mapYl+1)<=QUARTERLY_AUTO_MAX_YEARS); }
+function ensureMapQuarterly(){
+  if(mapQState!=='idle') return;
+  mapQState='loading';
+  Promise.all([fetch('q/towns.json').then(r=>{ if(!r.ok) throw new Error(r.status); return r.json(); }),
+               loadQuarterly({level:'sg'})])
+    .then(([towns, sg])=>{ MAPQ={towns, sg}; mapQState='ready'; updateMapPeriod(); refreshEverything(); })
+    .catch(()=>{ mapQState='failed'; updateMapPeriod(); refreshEverything(); });
+}
+function updateMapPeriod(){
+  const want = mapWantQ();
+  if(want){
+    ensureMapQuarterly();
+    if(mapQYl!==mapYl || mapQYh!==mapYh){
+      mapQYl=mapYl; mapQYh=mapYh;
+      const opts=[]; for(let y=mapYl;y<=mapYh;y++) for(let q=0;q<4;q++) opts.push(y+q/4);
+      mapQFrom.innerHTML = opts.map(v=>`<option value="${v}">${fmtPeriod(v,true)}</option>`).join('');
+      mapQTo.innerHTML = mapQFrom.innerHTML;
+      mapQFrom.value=String(opts[0]); mapQTo.value=String(opts[opts.length-1]);
+    }
+  }
+  mapQuarterly = want && mapQState==='ready';
+  if(mapQuarterly){ mapLo=+mapQFrom.value; mapHi=+mapQTo.value; if(mapLo>mapHi)[mapLo,mapHi]=[mapHi,mapLo]; mapStep=0.25; }
+  else { mapLo=mapYl; mapHi=mapYh; mapStep=1; }
+  document.getElementById('mapQRow').style.display = mapQuarterly ? 'inline-flex' : 'none';
+  document.getElementById('mapTsStatus').textContent = !want ? '' : mapQState==='loading' ? 'loading quarterly data…'
+    : mapQState==='failed' ? 'quarterly data unavailable — showing yearly' : '';
+  document.getElementById('mapYrLbl').textContent = mapPeriodLabel();
+}
+function mapPeriodLabel(){ return mapQuarterly ? `${fmtPeriod(mapLo,true)} – ${fmtPeriod(mapHi,true)}` : `${mapYl} – ${mapYh}`; }
+// Records for a town / nationwide at the map's current timescale, combined over the global flat-type selection.
+function townRecs(t){
+  if(mapQuarterly){ const q=MAPQ.towns[t]||{byFt:{},comb:[]}; return combinedForSelection(q.comb||[], q.byFt||{}, globalSelectedTypes); }
+  return combinedForSelection(TOWN_YEAR[t], TOWN_AGG[t], globalSelectedTypes);
+}
+function sgRecs(){
+  if(mapQuarterly) return combinedForSelection(MAPQ.sg.comb||[], MAPQ.sg.byFt||{}, globalSelectedTypes);
+  return combinedForSelection(SG_YEAR, SG_AGG, globalSelectedTypes);
+}
+function mapCompute(key, recs){ return RM[key].compute(recs, mapLo, mapHi, mapStep); }
+document.querySelectorAll('#mapTsPills .pill').forEach(p=>p.addEventListener('click',()=>{
+  document.querySelectorAll('#mapTsPills .pill').forEach(x=>x.classList.toggle('on', x===p));
+  mapTs=p.dataset.ts; updateMapPeriod(); refreshEverything();
+}));
+[mapQFrom, mapQTo].forEach(el=>el.addEventListener('change',()=>{ updateMapPeriod(); refreshEverything(); }));
 [mapYrLow, mapYrHigh].forEach(el=>el.addEventListener('input', ()=>{
   let lo=+mapYrLow.value, hi=+mapYrHigh.value; if(lo>hi)[lo,hi]=[hi,lo];
-  mapYl=lo; mapYh=hi; updateMapYrLbl();
+  mapYl=lo; mapYh=hi; updateMapPeriod();
   refreshEverything();
 }));
-updateMapYrLbl();
+updateMapPeriod();
 
 const svg = document.getElementById('map');
 let activeTown=null, activeMode=null; // activeMode: 'town' | 'sg'
@@ -520,11 +586,11 @@ function renderMap(){
   const rm = RM[currentMapMetric];
   const towns = Object.keys(TOWN_COORDS);
   const combinedByTown = {};
-  towns.forEach(t=>{ combinedByTown[t] = combinedForSelection(TOWN_YEAR[t], TOWN_AGG[t], globalSelectedTypes); });
+  towns.forEach(t=>{ combinedByTown[t] = townRecs(t); });
   const colorVals = {}, sizeVals = {};
   towns.forEach(t=>{
-    colorVals[t] = rm.compute(combinedByTown[t], mapYl, mapYh);
-    sizeVals[t] = RM.velocity.compute(combinedByTown[t], mapYl, mapYh);
+    colorVals[t] = mapCompute(currentMapMetric, combinedByTown[t]);
+    sizeVals[t] = mapCompute('velocity', combinedByTown[t]);
   });
   const breaks = quantileBreaks(Object.values(colorVals), 5);
   const sizeNums = Object.values(sizeVals).filter(x=>x!=null);
@@ -551,7 +617,7 @@ function renderMap(){
     c.classList.add('town-dot');
     c.addEventListener('click',()=>selectTown(town));
     const titleEl = document.createElementNS('http://www.w3.org/2000/svg','title');
-    titleEl.textContent = `${town}: ${rm.label} ${rm.fmt(cv)} · ${RM.velocity.fmt(sv)} (${mapYl}–${mapYh})`;
+    titleEl.textContent = `${town}: ${rm.label} ${rm.fmt(cv)} · ${RM.velocity.fmt(sv)} (${mapPeriodLabel()})`;
     c.appendChild(titleEl);
     svg.appendChild(c);
     const label = document.createElementNS('http://www.w3.org/2000/svg','text');
@@ -587,7 +653,7 @@ function renderMap(){
   } else {
     legendEl.innerHTML = '<span>No data for the selected flat types in this range.</span>';
   }
-  document.getElementById('legendNote').textContent = `Circle size = transactions/yr, ${mapYl}–${mapYh} (larger = more active market). Quantile-binned into 5 classes so the spread of towns is visible even when values cluster. Flat types: ${globalSelectedTypes.length===MASTER_FLAT_TYPES.length?'all':globalSelectedTypes.join(', ')}.`;
+  document.getElementById('legendNote').textContent = `Circle size = transactions/yr, ${mapPeriodLabel()} (larger = more active market). Quantile-binned into 5 classes so the spread of towns is visible even when values cluster. Flat types: ${globalSelectedTypes.length===MASTER_FLAT_TYPES.length?'all':globalSelectedTypes.join(', ')}.`;
 }
 renderMap();
 
@@ -614,27 +680,38 @@ function selectTown(town, barMetric){
   // Build the three row categories -- individual streets, the town average, and the
   // Singapore average -- all measured on the SAME metric + SAME global year range + SAME
   // flat-type selection so they're directly comparable on one bar scale.
+  // Quarterly map timescale: street bars need this town's quarterly street file (lazy).
+  let townQ = null;
+  if(mapQuarterly){
+    townQ = _townQReady[town];
+    if(!townQ){
+      rightBody.innerHTML = '<div class="empty">Loading quarterly street data…</div>';
+      loadTownQFile(town).then(d=>{ _townQReady[town]=d; if(activeTown===town && viewMode==='list') selectTown(town, currentBarMetric); })
+        .catch(()=>{ rightBody.innerHTML = '<div class="empty">Quarterly street data could not be loaded — switch the map timescale to Yearly.</div>'; });
+      return;
+    }
+  }
   const streetNames = Object.keys(STREET_YEAR[town]||{});
   const streetCombined = {};
-  streetNames.forEach(s=>{ streetCombined[s] = combinedForSelection(STREET_YEAR[town][s], STREET_DATA[town][s], globalSelectedTypes); });
+  streetNames.forEach(s=>{
+    if(townQ){ const q=townQ.streets[s]||{byFt:{},comb:[]}; streetCombined[s] = combinedForSelection(q.comb||[], q.byFt||{}, globalSelectedTypes); }
+    else streetCombined[s] = combinedForSelection(STREET_YEAR[town][s], STREET_DATA[town][s], globalSelectedTypes);
+  });
   const rows = streetNames.map(s=>({
     key:s,
-    val: RM[currentBarMetric].compute(streetCombined[s], mapYl, mapYh),
-    n: sumN(filterRange(streetCombined[s], mapYl, mapYh)),
+    val: mapCompute(currentBarMetric, streetCombined[s]),
+    n: sumN(filterRange(streetCombined[s], mapLo, mapHi)),
   })).filter(r=>r.val!=null);
   rows.sort((a,b)=>b.val-a.val);
 
-  const townCombined = combinedForSelection(TOWN_YEAR[town], TOWN_AGG[town], globalSelectedTypes);
-  const sgCombined = combinedForSelection(SG_YEAR, SG_AGG, globalSelectedTypes);
-  const townVal = RM[currentBarMetric].compute(townCombined, mapYl, mapYh);
-  const townN = sumN(filterRange(townCombined, mapYl, mapYh));
-  const sgVal = RM[currentBarMetric].compute(sgCombined, mapYl, mapYh);
-  const sgN = sumN(filterRange(sgCombined, mapYl, mapYh));
+  const townCombined = townRecs(town);
+  const sgCombined = sgRecs();
+  const townVal = mapCompute(currentBarMetric, townCombined);
+  const townN = sumN(filterRange(townCombined, mapLo, mapHi));
+  const sgVal = mapCompute(currentBarMetric, sgCombined);
+  const sgN = sumN(filterRange(sgCombined, mapLo, mapHi));
 
-  const allTownEntries = Object.keys(TOWN_YEAR).map(t=>{
-    const c = combinedForSelection(TOWN_YEAR[t], TOWN_AGG[t], globalSelectedTypes);
-    return {t, v:RM[currentBarMetric].compute(c,mapYl,mapYh)};
-  }).filter(e=>e.v!=null);
+  const allTownEntries = Object.keys(TOWN_YEAR).map(t=>({t, v:mapCompute(currentBarMetric, townRecs(t))})).filter(e=>e.v!=null);
   allTownEntries.sort((a,b)=>b.v-a.v);
   const townRank = allTownEntries.findIndex(e=>e.t===town)+1;
 
@@ -651,7 +728,7 @@ function selectTown(town, barMetric){
   function barPct(v){ if(v==null) return 0; return Math.min(100, Math.max(2, Math.round(100*(v-vMin)/((vMax-vMin)||1)))); }
 
   const typeNote = globalSelectedTypes.length===MASTER_FLAT_TYPES.length ? 'all flat types' : globalSelectedTypes.join(', ');
-  let html = `<div style="font-size:10.5px;color:var(--ink-soft);margin-bottom:6px;">Ranked by: ${typeNote} · ${mapYl}–${mapYh} <span style="opacity:.8;">(change these above, on the map). Bars are shown for streets only, scaled to their own range — the two benchmark rows above show the number without a bar, since Singapore's and the town's totals are on a different scale (e.g. nationwide transaction volume vastly exceeds any single street's) and would otherwise distort the street-to-street comparison.</span></div>`;
+  let html = `<div style="font-size:10.5px;color:var(--ink-soft);margin-bottom:6px;">Ranked by: ${typeNote} · ${mapPeriodLabel()} <span style="opacity:.8;">(change these above, on the map). Bars are shown for streets only, scaled to their own range — the two benchmark rows above show the number without a bar, since Singapore's and the town's totals are on a different scale (e.g. nationwide transaction volume vastly exceeds any single street's) and would otherwise distort the street-to-street comparison.</span></div>`;
   html += `<div class="metric-pills" id="barMetricPills" style="margin-bottom:10px;">`;
   BAR_METRICS.forEach(k=>{ html += `<span class="pill${k===currentBarMetric?' on':''}" data-metric="${k}">${RM[k].label}</span>`; });
   html += `</div><div id="streetlist">`;
@@ -726,6 +803,9 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
   const yMin=years[0], yMax=years[years.length-1];
   const lMin=Math.floor(Math.min(...allLease)), lMax=Math.ceil(Math.max(...allLease));
   const prMin=Math.floor(Math.min(...allPrice)/1000)*1000, prMax=Math.ceil(Math.max(...allPrice)/1000)*1000;
+  // Open on the map's current period (clamped to what this entity has); Reset = full range.
+  let initYl=Math.max(yMin, Math.min(yMax, mapYl)), initYh=Math.max(yMin, Math.min(yMax, mapYh));
+  if(initYl>initYh){ initYl=yMin; initYh=yMax; }
 
   let html = `<div class="filters">
     <div class="rowflex">
@@ -740,12 +820,12 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
     </div>
     <div class="rowflex">
       <div class="filter-row" style="flex:1"><label>Year range (drives everything below, including the mini-stats and ranks) <span id="yrLbl"></span></label>
-        <div class="rangewrap"><input type="range" id="yrLow" min="${yMin}" max="${yMax}" value="${yMin}">
-        <input type="range" id="yrHigh" min="${yMin}" max="${yMax}" value="${yMax}"></div></div>
+        <div class="rangewrap"><input type="range" id="yrLow" min="${yMin}" max="${yMax}" value="${initYl}">
+        <input type="range" id="yrHigh" min="${yMin}" max="${yMax}" value="${initYh}"></div></div>
     </div>
     <div class="rowflex" style="align-items:flex-end">
       <div class="filter-row"><label>Timescale <span style="opacity:.8">(Auto = quarterly when the range is ${QUARTERLY_AUTO_MAX_YEARS} years or less)</span></label>
-        <div class="pills" id="tsPills"><span class="pill on" data-ts="auto">Auto</span><span class="pill" data-ts="year">Yearly</span><span class="pill" data-ts="quarter">Quarterly</span></div></div>
+        <div class="pills" id="tsPills">${['auto','year','quarter'].map(k=>`<span class="pill${k===mapTs?' on':''}" data-ts="${k}">${{auto:'Auto',year:'Yearly',quarter:'Quarterly'}[k]}</span>`).join('')}</div></div>
       <div class="filter-row" id="qRangeRow" style="display:none"><label>Quarters</label>
         <div style="display:flex;gap:6px;align-items:center"><select class="metricSel" id="qFrom"></select><span>to</span><select class="metricSel" id="qTo"></select></div></div>
       <div class="filter-row"><label>&nbsp;</label><span id="tsStatus" style="font-size:11px;color:var(--ink-soft)"></span></div>
@@ -776,7 +856,8 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
   Object.values(els).forEach(el=>el.addEventListener('input', update));
   metricSel.addEventListener('change', update);
   // ---- Quarterly timescale (lazy-loaded per-town quarterly data) ----
-  let tsMode='auto', qData=null, qState='idle';  // qState: idle|loading|ready|failed
+  let tsMode=mapTs, qData=null, qState='idle';
+  let pendingQ = mapQuarterly ? [mapLo, mapHi] : null;  // carry the map's quarter picks into this view  // qState: idle|loading|ready|failed
   const qFrom=document.getElementById('qFrom'), qTo=document.getElementById('qTo');
   let qYl=null, qYh=null;
   document.querySelectorAll('#tsPills .pill').forEach(p=>p.addEventListener('click',()=>{
@@ -799,6 +880,11 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
     qFrom.innerHTML = opts.map(v=>`<option value="${v}">${fmtPeriod(v,true)}</option>`).join('');
     qTo.innerHTML = qFrom.innerHTML;
     qFrom.value = String(opts[0]); qTo.value = String(opts[opts.length-1]);
+    if(pendingQ){
+      if(opts.includes(pendingQ[0])) qFrom.value=String(pendingQ[0]);
+      if(opts.includes(pendingQ[1])) qTo.value=String(pendingQ[1]);
+      pendingQ=null;
+    }
   }
   document.getElementById('resetBtn').addEventListener('click',()=>{
     els.yrLow.value=yMin; els.yrHigh.value=yMax; els.leaseLow.value=lMin; els.leaseHigh.value=lMax; els.prLow.value=prMin; els.prHigh.value=prMax;
@@ -843,12 +929,14 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
   function update(){
     const {yl,yh,lo,hi,quarterly,activeFts,rows} = getFiltered();
     const P = v=>fmtPeriod(v, quarterly);
+    // Ranks compare peers on yearly data: use the full years the chosen period touches.
+    const rkYl = quarterly ? Math.floor(lo+1e-9) : yl, rkYh = quarterly ? Math.floor(hi+1e-9) : yh;
     document.getElementById('yrLbl').textContent = quarterly ? `${P(lo)} – ${P(hi)}` : `${yl} – ${yh}`;
     const wantQ = wantQuarterly(yl,yh);
     document.getElementById('qRangeRow').style.display = (wantQ && qState==='ready') ? '' : 'none';
     document.getElementById('tsStatus').textContent = !wantQ ? 'showing yearly points'
       : qState==='loading' ? 'loading quarterly data…' : qState==='failed' ? 'quarterly data unavailable — showing yearly'
-      : `showing quarterly points; mini-stats use ${P(lo)}–${P(hi)}, ranks use full years ${yl}–${yh}`;
+      : `showing quarterly points; mini-stats use ${P(lo)}–${P(hi)}, ranks use full years ${rkYl}–${rkYh}`;
     document.getElementById('leaseLbl').textContent = `${els.leaseLow.value} – ${els.leaseHigh.value}`;
     document.getElementById('priceLbl').textContent = `${(els.prLow.value/1000).toFixed(0)}k – ${(els.prHigh.value/1000).toFixed(0)}k`;
 
@@ -889,15 +977,15 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
     const typeNote = activeFts.length===flatTypes.length ? 'all flat types' : activeFts.join(', ');
 
     document.getElementById('miniStats').innerHTML =
-      statLine(`${totalNrCombined.toLocaleString()} tx`, `transactions in range (${typeNote})`, computeRank('velocity',yl,yh,rankCtx,activeFts)) +
-      statLine(RM.velocity.fmt(vVelocity), 'velocity (tx/yr)', computeRank('velocity',yl,yh,rankCtx,activeFts)) +
-      statLine(RM.price.fmt(vPrice), RM.price.label.toLowerCase(), computeRank('price',yl,yh,rankCtx,activeFts)) +
-      statLine(RM.psf.fmt(vPsf), RM.psf.label.toLowerCase()+' (weighted)', computeRank('psf',yl,yh,rankCtx,activeFts)) +
-      statLine(RM.area.fmt(vArea), RM.area.label.toLowerCase(), computeRank('area',yl,yh,rankCtx,activeFts)) +
-      statLine(RM.lease.fmt(vLease), RM.lease.label.toLowerCase(), computeRank('lease',yl,yh,rankCtx,activeFts)) +
-      statLine(RM.cagr_price.fmt(vCagrPrice), RM.cagr_price.label.toLowerCase(), computeRank('cagr_price',yl,yh,rankCtx,activeFts)) +
-      statLine(RM.cagr_psf.fmt(vCagrPsf), RM.cagr_psf.label.toLowerCase(), computeRank('cagr_psf',yl,yh,rankCtx,activeFts)) +
-      statLine(RM.growth_price.fmt(vGrowth), RM.growth_price.label.toLowerCase(), computeRank('growth_price',yl,yh,rankCtx,activeFts)) +
+      statLine(`${totalNrCombined.toLocaleString()} tx`, `transactions in range (${typeNote})`, computeRank('velocity',rkYl,rkYh,rankCtx,activeFts)) +
+      statLine(RM.velocity.fmt(vVelocity), 'velocity (tx/yr)', computeRank('velocity',rkYl,rkYh,rankCtx,activeFts)) +
+      statLine(RM.price.fmt(vPrice), RM.price.label.toLowerCase(), computeRank('price',rkYl,rkYh,rankCtx,activeFts)) +
+      statLine(RM.psf.fmt(vPsf), RM.psf.label.toLowerCase()+' (weighted)', computeRank('psf',rkYl,rkYh,rankCtx,activeFts)) +
+      statLine(RM.area.fmt(vArea), RM.area.label.toLowerCase(), computeRank('area',rkYl,rkYh,rankCtx,activeFts)) +
+      statLine(RM.lease.fmt(vLease), RM.lease.label.toLowerCase(), computeRank('lease',rkYl,rkYh,rankCtx,activeFts)) +
+      statLine(RM.cagr_price.fmt(vCagrPrice), RM.cagr_price.label.toLowerCase(), computeRank('cagr_price',rkYl,rkYh,rankCtx,activeFts)) +
+      statLine(RM.cagr_psf.fmt(vCagrPsf), RM.cagr_psf.label.toLowerCase(), computeRank('cagr_psf',rkYl,rkYh,rankCtx,activeFts)) +
+      statLine(RM.growth_price.fmt(vGrowth), RM.growth_price.label.toLowerCase(), computeRank('growth_price',rkYl,rkYh,rankCtx,activeFts)) +
       statLine(chg!==null? (chg>0?'+':'')+chg+'%':'—', `${metric.label} change (chart view), ${first?P(first[F.YEAR]):P(lo)}→${last?P(last[F.YEAR]):P(hi)}`, '');
   }
   currentSeriesUpdate = update;
@@ -1010,21 +1098,25 @@ compareToggle.addEventListener('click', ()=>{
   renderCompareTable();
 });
 function streetsInRange(town){
+  // Quarterly + this town's street file already loaded: exact quarters. Otherwise yearly
+  // data over the years the period touches (avoids downloading every town's street file).
+  const tq = mapQuarterly ? _townQReady[town] : null;
+  if(tq) return Object.values(tq.streets).filter(q=>filterRange(combinedForSelection(q.comb||[], q.byFt||{}, globalSelectedTypes), mapLo, mapHi).length>0).length;
   const s = STREET_YEAR[town] || {}, sd = STREET_DATA[town] || {};
-  return Object.keys(s).filter(st=>filterRange(combinedForSelection(s[st], sd[st], globalSelectedTypes), mapYl, mapYh).length>0).length;
+  return Object.keys(s).filter(st=>filterRange(combinedForSelection(s[st], sd[st], globalSelectedTypes), Math.floor(mapLo), Math.floor(mapHi)).length>0).length;
 }
-function townCombined(t){ return combinedForSelection(TOWN_YEAR[t], TOWN_AGG[t], globalSelectedTypes); }
+function townCombined(t){ return townRecs(t); }
 const COMPARE_COLS = [
   {key:'town', label:'Town', get:t=>t, fmt:v=>v, numeric:false},
-  {key:'streets', label:'Streets active in range', get:t=>streetsInRange(t), fmt:v=>v},
-  {key:'total_n', label:'Total tx (range)', get:t=>sumN(filterRange(townCombined(t),mapYl,mapYh)), fmt:v=>v.toLocaleString()},
-  {key:'velocity', label:'Velocity, tx/yr', get:t=>RM.velocity.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.velocity.fmt(v)},
-  {get label(){return RM.price.label;}, key:'price', get:t=>RM.price.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.price.fmt(v)},
-  {get label(){return RM.psf.label;}, key:'psf', get:t=>RM.psf.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.psf.fmt(v)},
-  {get label(){return RM.lease.label;}, key:'lease', get:t=>RM.lease.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.lease.fmt(v)},
-  {get label(){return RM.cagr_price.label;}, key:'cagr_price', get:t=>RM.cagr_price.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.cagr_price.fmt(v)},
-  {get label(){return RM.cagr_psf.label;}, key:'cagr_psf', get:t=>RM.cagr_psf.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.cagr_psf.fmt(v)},
-  {get label(){return RM.growth_price.label;}, key:'growth_price', get:t=>RM.growth_price.compute(townCombined(t),mapYl,mapYh), fmt:v=>RM.growth_price.fmt(v)},
+  {key:'streets', get label(){ return mapQuarterly ? 'Streets active (by year)' : 'Streets active in range'; }, get:t=>streetsInRange(t), fmt:v=>v},
+  {key:'total_n', label:'Total tx (range)', get:t=>sumN(filterRange(townCombined(t),mapLo,mapHi)), fmt:v=>v.toLocaleString()},
+  {key:'velocity', label:'Velocity, tx/yr', get:t=>mapCompute('velocity',townCombined(t)), fmt:v=>RM.velocity.fmt(v)},
+  {get label(){return RM.price.label;}, key:'price', get:t=>mapCompute('price',townCombined(t)), fmt:v=>RM.price.fmt(v)},
+  {get label(){return RM.psf.label;}, key:'psf', get:t=>mapCompute('psf',townCombined(t)), fmt:v=>RM.psf.fmt(v)},
+  {get label(){return RM.lease.label;}, key:'lease', get:t=>mapCompute('lease',townCombined(t)), fmt:v=>RM.lease.fmt(v)},
+  {get label(){return RM.cagr_price.label;}, key:'cagr_price', get:t=>mapCompute('cagr_price',townCombined(t)), fmt:v=>RM.cagr_price.fmt(v)},
+  {get label(){return RM.cagr_psf.label;}, key:'cagr_psf', get:t=>mapCompute('cagr_psf',townCombined(t)), fmt:v=>RM.cagr_psf.fmt(v)},
+  {get label(){return RM.growth_price.label;}, key:'growth_price', get:t=>mapCompute('growth_price',townCombined(t)), fmt:v=>RM.growth_price.fmt(v)},
 ];
 function renderCompareTable(){
   const towns = Object.keys(TOWN_YEAR);

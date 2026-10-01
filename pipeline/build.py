@@ -49,7 +49,7 @@ def build_quarterly(harmonized, out_dir):
           "comb": q_records(aggregate.make_agg(df, ["qkey"]))}
     with open(os.path.join(out_dir, "sg.json"), "w") as f:
         json.dump(sg, f, separators=(",", ":"))
-    index = {}
+    index, towns_obj = {}, {}
     for town, tdf in df.groupby("town"):
         t_ft = aggregate.make_agg(tdf, ["flat_type", "qkey"])
         t_c = aggregate.make_agg(tdf, ["qkey"])
@@ -63,10 +63,15 @@ def build_quarterly(harmonized, out_dir):
         obj = {"town": {"byFt": {ft: q_records(sub) for ft, sub in t_ft.groupby("flat_type")},
                         "comb": q_records(t_c)},
                "streets": streets}
+        towns_obj[town] = obj["town"]
         fn = slug(town) + ".json"
         index[town] = fn
         with open(os.path.join(out_dir, fn), "w") as f:
             json.dump(obj, f, separators=(",", ":"))
+    # Town-level quarterly for ALL towns in one file: what the map / comparison table
+    # need when the map's own timescale goes quarterly.
+    with open(os.path.join(out_dir, "towns.json"), "w") as f:
+        json.dump(towns_obj, f, separators=(",", ":"))
     total = sum(os.path.getsize(os.path.join(out_dir, x)) for x in os.listdir(out_dir))
     print(f"Wrote quarterly data: {len(index)} town files + sg.json ({total/1e6:.1f} MB total)")
     return index
