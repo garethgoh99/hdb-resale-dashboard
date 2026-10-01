@@ -15,6 +15,7 @@ A GitHub Actions workflow (`.github/workflows/refresh-dashboard.yml`) runs every
    - It refuses to continue if a dataset comes back empty, short or with missing columns.
 2. **`pipeline/harmonize.py`** merges the five eras into one schema. This covers the lease-string parsing, the `MULTI GENERATION` spelling fix, the 99-year-lease fallback and $psf.
 3. **`pipeline/build.py`** aggregates the data into the 18-field records (via `pipeline/aggregate.py`) and fills `template/dashboard_template.html` to produce `site/index.html`.
+   It also writes per-quarter aggregates to `site/q/<town>.json`. The detail view loads these on demand when the year range is 5 years or less, or when Quarterly is picked.
 4. The workflow syntax-checks the page and deploys it to GitHub Pages.
 5. If the data changed, it commits `data/latest_meta.json`. That file is a small refresh log, and the commits also keep the daily schedule from being auto-disabled.
 

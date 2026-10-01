@@ -72,7 +72,7 @@ jobs:
         run: |
           python - <<'EOF'
           import json
-          m = json.load(open("site/meta.json")); m.pop("built_at", None)
+          m = json.load(open("site/meta.json")); [m.pop(k, None) for k in ("built_at", "api_pulled_at", "source_note")]
           json.dump(m, open("data/latest_meta.json", "w"), indent=1)
           EOF
           git config user.name "github-actions[bot]"

@@ -19,6 +19,8 @@ A run fails loudly (non-zero exit) rather than publishing a partial dataset; the
 previously deployed dashboard then simply stays live.
 """
 import csv
+import datetime
+import json
 import io
 import os
 import sys
@@ -37,6 +39,7 @@ REQUIRED_COLS = {"month", "town", "flat_type", "block", "street_name", "storey_r
                  "floor_area_sqm", "flat_model", "lease_commence_date", "resale_price"}
 
 STATIC_REFRESH_DAYS = int(os.environ.get("STATIC_REFRESH_DAYS", "7"))
+BUILD_DIR = os.path.join(os.path.dirname(__file__), "..", "build")
 RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
 API_KEY = os.environ.get("DATA_GOV_SG_API_KEY", "").strip()
 HEADERS = {"x-api-key": API_KEY} if API_KEY else {}
@@ -106,6 +109,21 @@ def fetch_paged(dataset_id, limit=10_000):
     return rows
 
 
+def source_last_updated(dataset_id):
+    """data.gov.sg's own 'last updated' timestamp for a dataset (best effort, never fatal)."""
+    for ver in ("v2", "v1"):
+        try:
+            j = get_json(f"https://api-open.data.gov.sg/{ver}/public/api/datasets/{dataset_id}/metadata", tries=2)
+            d = j.get("data") or {}
+            d = d.get("metadata", d) if isinstance(d, dict) else {}
+            for k in ("lastUpdatedAt", "last_updated_at", "lastUpdated", "updatedAt"):
+                if d.get(k):
+                    return str(d[k])
+        except Exception as e:  # noqa: BLE001
+            print(f"  (metadata {ver} unavailable: {e})")
+    return None
+
+
 def validate(rows, meta):
     if not rows:
         raise RuntimeError("no rows returned")
@@ -128,6 +146,7 @@ def write_csv(rows, path):
 
 def main():
     os.makedirs(RAW_DIR, exist_ok=True)
+    log = {}
     print(f"API key present: {'yes' if API_KEY else 'NO (public rate limits)'}")
     for ds, meta in DATASETS.items():
         path = os.path.join(RAW_DIR, f"{ds}.csv")
@@ -166,6 +185,14 @@ def main():
         write_csv(rows, path)
         with open(stamp, "w") as f:
             f.write(str(time.time()))
+        if not meta["static"]:
+            log = {"live_dataset": ds, "live_rows": len(rows),
+                   "live_pulled_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                   "source_last_updated": source_last_updated(ds)}
+            print(f"  pulled at {log['live_pulled_at']} | data.gov.sg last updated: {log['source_last_updated']}")
+    os.makedirs(BUILD_DIR, exist_ok=True)
+    with open(os.path.join(BUILD_DIR, "fetch_log.json"), "w") as f:
+        json.dump(log, f, indent=1)
     print("All datasets present.")
 
 

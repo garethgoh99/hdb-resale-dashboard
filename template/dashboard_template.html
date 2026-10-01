@@ -39,6 +39,7 @@ header.top .sub{color:var(--ink-soft); font-size:13px; max-width:520px;}
 .stat{font-size:12px; color:var(--ink-soft);}
 .stat b{display:block; font-size:17px; color:var(--ink); font-family:"Space Grotesk",sans-serif; font-weight:600;}
 .grid{display:grid; grid-template-columns:1.1fr 1.3fr; gap:18px; align-items:start;}
+.grid > *{min-width:0;}  /* keep wide tables scrolling inside their panel instead of squeezing the map */
 @media (max-width:980px){ .grid{grid-template-columns:1fr;} }
 .panel{background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:16px;}
 .panel h2{font-size:14px; margin:0 0 10px; font-weight:600; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;}
@@ -119,13 +120,14 @@ table.datatable tr:hover td{background:var(--panel-2);}
   <header class="top">
     <div>
       <h1>HDB Resale Price Explorer</h1>
-      <div class="sub">Registered resale transactions, __EARLIEST_MONTH__ – __LATEST_MONTH__, by town and street. <span style="opacity:.75">Auto-refreshed from data.gov.sg · last refreshed __BUILT_AT__</span></div>
+      <div class="sub">Registered resale transactions, __EARLIEST_MONTH__ – __LATEST_MONTH__, by town and street. <span style="opacity:.75">Auto-refreshed daily from the data.gov.sg API__SOURCE_NOTE__. Transactions are dated by month only.</span></div>
     </div>
     <div class="statbar">
       <div class="stat"><b>__TOTAL_TX__</b>transactions</div>
       <div class="stat"><b>__TOTAL_TOWNS__</b>towns</div>
       <div class="stat"><b>__TOTAL_STREETS__</b>streets tracked</div>
-      <div class="stat"><b>__LATEST_MONTH__</b>data as of</div>
+      <div class="stat"><b>__LATEST_MONTH_LONG__</b>latest transactions</div>
+      <div class="stat"><b>__API_PULLED_AT__</b>data as of (last successful API pull)</div>
     </div>
   </header>
 
@@ -181,7 +183,18 @@ const TOWN_SUMMARY = __TOWN_SUMMARY_JSON__;
 const TOWN_COORDS = __TOWN_COORDS_JSON__;
 const TOWN_YEAR = __TOWN_YEAR_JSON__;     // town -> [record,...] ALL flat types combined, correct medians
 const STREET_YEAR = __STREET_YEAR_JSON__; // town -> street -> [record,...] ALL flat types combined
-const SG_YEAR = __SG_YEAR_JSON__;         // [record,...] nationwide, ALL flat types combined
+const SG_YEAR = __SG_YEAR_JSON__;
+const Q_INDEX = __Q_INDEX_JSON__;         // town -> quarterly data file (lazy-loaded, see loadQuarterly)
+const QUARTERLY_AUTO_MAX_YEARS = 5;       // Auto timescale: quarters when the range spans <= this many years
+const _qCache = {};
+function loadQuarterly(rankCtx){
+  const file = rankCtx.level==='sg' ? 'sg.json' : Q_INDEX[rankCtx.town];
+  if(!file) return Promise.reject(new Error('no quarterly file'));
+  if(!_qCache[file]) _qCache[file] = fetch('q/'+file).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json(); })
+    .catch(e=>{ delete _qCache[file]; throw e; });
+  return _qCache[file].then(d=> rankCtx.level==='sg' ? d : rankCtx.level==='town' ? d.town : d.streets[rankCtx.street]);
+}
+function fmtPeriod(x, quarterly){ if(!quarterly) return String(Math.round(x)); const y=Math.floor(x+1e-9); return `${y} Q${Math.round((x-y)*4)+1}`; }         // [record,...] nationwide, ALL flat types combined
 // record fields (18): year, n, then mean/median/min/max for EACH of price, lease, area, psf.
 // Having all four statistics for every dimension (not just price) is what makes the global
 // median/mean/lowest/highest toggle below apply uniformly everywhere, not just to price.
@@ -730,6 +743,13 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
         <div class="rangewrap"><input type="range" id="yrLow" min="${yMin}" max="${yMax}" value="${yMin}">
         <input type="range" id="yrHigh" min="${yMin}" max="${yMax}" value="${yMax}"></div></div>
     </div>
+    <div class="rowflex" style="align-items:flex-end">
+      <div class="filter-row"><label>Timescale <span style="opacity:.8">(Auto = quarterly when the range is ${QUARTERLY_AUTO_MAX_YEARS} years or less)</span></label>
+        <div class="pills" id="tsPills"><span class="pill on" data-ts="auto">Auto</span><span class="pill" data-ts="year">Yearly</span><span class="pill" data-ts="quarter">Quarterly</span></div></div>
+      <div class="filter-row" id="qRangeRow" style="display:none"><label>Quarters</label>
+        <div style="display:flex;gap:6px;align-items:center"><select class="metricSel" id="qFrom"></select><span>to</span><select class="metricSel" id="qTo"></select></div></div>
+      <div class="filter-row"><label>&nbsp;</label><span id="tsStatus" style="font-size:11px;color:var(--ink-soft)"></span></div>
+    </div>
     <div class="rowflex">
       <div class="filter-row" style="flex:1"><label>Remaining lease, years — mean-based filter, chart/table only, independent of Statistic toggle above <span id="leaseLbl"></span></label>
         <div class="rangewrap"><input type="range" id="leaseLow" min="${lMin}" max="${lMax}" value="${lMin}">
@@ -755,9 +775,35 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
   document.querySelectorAll('#ftPills .pill').forEach(p=>p.addEventListener('click',()=>{ p.classList.toggle('on'); update(); }));
   Object.values(els).forEach(el=>el.addEventListener('input', update));
   metricSel.addEventListener('change', update);
+  // ---- Quarterly timescale (lazy-loaded per-town quarterly data) ----
+  let tsMode='auto', qData=null, qState='idle';  // qState: idle|loading|ready|failed
+  const qFrom=document.getElementById('qFrom'), qTo=document.getElementById('qTo');
+  let qYl=null, qYh=null;
+  document.querySelectorAll('#tsPills .pill').forEach(p=>p.addEventListener('click',()=>{
+    document.querySelectorAll('#tsPills .pill').forEach(x=>x.classList.toggle('on', x===p));
+    tsMode=p.dataset.ts; update();
+  }));
+  qFrom.addEventListener('change', update); qTo.addEventListener('change', update);
+  function wantQuarterly(yl,yh){ return tsMode==='quarter' || (tsMode==='auto' && (yh-yl+1)<=QUARTERLY_AUTO_MAX_YEARS); }
+  function ensureQuarterly(){
+    if(qState!=='idle') return;
+    qState='loading';
+    loadQuarterly(rankCtx).then(d=>{ qData=d||{byFt:{},comb:[]}; qState='ready'; if(currentSeriesUpdate===update) update(); })
+      .catch(()=>{ qState='failed'; if(currentSeriesUpdate===update) update(); });
+  }
+  function syncQuarterSelects(yl,yh){
+    // Rebuild the from/to quarter pickers when the year range changes; keep choices otherwise.
+    if(qYl===yl && qYh===yh) return;
+    qYl=yl; qYh=yh;
+    const opts=[]; for(let y=yl;y<=yh;y++) for(let q=0;q<4;q++) opts.push(y+q/4);
+    qFrom.innerHTML = opts.map(v=>`<option value="${v}">${fmtPeriod(v,true)}</option>`).join('');
+    qTo.innerHTML = qFrom.innerHTML;
+    qFrom.value = String(opts[0]); qTo.value = String(opts[opts.length-1]);
+  }
   document.getElementById('resetBtn').addEventListener('click',()=>{
     els.yrLow.value=yMin; els.yrHigh.value=yMax; els.leaseLow.value=lMin; els.leaseHigh.value=lMax; els.prLow.value=prMin; els.prHigh.value=prMax;
     document.querySelectorAll('#ftPills .pill').forEach(p=>p.classList.add('on'));
+    qYl=qYh=null;
     update();
   });
   const tableToggle = document.getElementById('tableToggle');
@@ -771,26 +817,45 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
     let yl=+els.yrLow.value, yh=+els.yrHigh.value; if(yl>yh)[yl,yh]=[yh,yl];
     let ll=+els.leaseLow.value, lh=+els.leaseHigh.value; if(ll>lh)[ll,lh]=[lh,ll];
     let pl=+els.prLow.value, ph=+els.prHigh.value; if(pl>ph)[pl,ph]=[ph,pl];
+    // A filter slider sitting at its outer end means "no limit" (quarterly averages can
+    // fall slightly outside the yearly bounds the sliders were built from).
+    if(ll<=lMin) ll=-Infinity; if(lh>=lMax) lh=Infinity;
+    if(pl<=prMin) pl=-Infinity; if(ph>=prMax) ph=Infinity;
     const activeFts = [...document.querySelectorAll('#ftPills .pill.on')].map(p=>p.dataset.ft);
+    let quarterly = wantQuarterly(yl,yh), lo=yl, hi=yh;
+    if(quarterly){
+      ensureQuarterly();
+      syncQuarterSelects(yl,yh);
+      if(qState==='ready'){
+        lo=+qFrom.value; hi=+qTo.value; if(lo>hi)[lo,hi]=[hi,lo];
+      } else quarterly=false;  // still loading / unavailable: show yearly meanwhile
+    }
+    const src = quarterly ? qData.byFt : byFt;
     const rows = [];
     activeFts.forEach(ft=>{
-      byFt[ft].filter(r=> r[F.YEAR]>=yl && r[F.YEAR]<=yh && r[F.LEASE_MEAN]>=ll && r[F.LEASE_MEAN]<=lh && r[F.PRICE_MEAN]>=pl && r[F.PRICE_MEAN]<=ph)
+      (src[ft]||[]).filter(r=> r[F.YEAR]>=lo-1e-9 && r[F.YEAR]<=hi+1e-9 && r[F.LEASE_MEAN]>=ll && r[F.LEASE_MEAN]<=lh && r[F.PRICE_MEAN]>=pl && r[F.PRICE_MEAN]<=ph)
         .sort((a,b)=>a[F.YEAR]-b[F.YEAR])
         .forEach(r=>rows.push({ft, r}));
     });
-    return {yl,yh,activeFts,rows};
+    return {yl,yh,lo,hi,quarterly,activeFts,rows};
   }
 
   function update(){
-    const {yl,yh,activeFts,rows} = getFiltered();
-    document.getElementById('yrLbl').textContent = `${yl} – ${yh}`;
+    const {yl,yh,lo,hi,quarterly,activeFts,rows} = getFiltered();
+    const P = v=>fmtPeriod(v, quarterly);
+    document.getElementById('yrLbl').textContent = quarterly ? `${P(lo)} – ${P(hi)}` : `${yl} – ${yh}`;
+    const wantQ = wantQuarterly(yl,yh);
+    document.getElementById('qRangeRow').style.display = (wantQ && qState==='ready') ? '' : 'none';
+    document.getElementById('tsStatus').textContent = !wantQ ? 'showing yearly points'
+      : qState==='loading' ? 'loading quarterly data…' : qState==='failed' ? 'quarterly data unavailable — showing yearly'
+      : `showing quarterly points; mini-stats use ${P(lo)}–${P(hi)}, ranks use full years ${yl}–${yh}`;
     document.getElementById('leaseLbl').textContent = `${els.leaseLow.value} – ${els.leaseHigh.value}`;
     document.getElementById('priceLbl').textContent = `${(els.prLow.value/1000).toFixed(0)}k – ${(els.prHigh.value/1000).toFixed(0)}k`;
 
     const metricKey = metricSel.value;
     const metric = METRICS[metricKey];
-    drawChart(rows, activeFts, metric, yl, yh);
-    renderTable(rows);
+    drawChart(rows, activeFts, metric, lo, hi, quarterly);
+    renderTable(rows, quarterly);
 
     // Chart-metric-specific % change (depends on the flat types currently toggled on
     // and the chart view chosen -- kept separate from the combined stats below).
@@ -804,17 +869,23 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
     // entity has is toggled on, an approximated combine (see footnote) when it's a
     // genuine subset. Same [yl,yh] as the chart's own slider. Every price/lease/psf/area
     // figure also follows the global Statistic toggle (median/mean/lowest/highest).
-    const cr = combinedForSelection(combinedRecords, byFt, activeFts);
-    const crIn = filterRange(cr, yl, yh);
+    // In quarterly mode the mini-stats use the quarterly records over the exact quarter
+    // range picked (same schema, so the same RM functions apply; CAGR uses fractional
+    // years). Ranks stay on full years because peers are compared on yearly data.
+    const cr = quarterly ? combinedForSelection(qData.comb||[], qData.byFt, activeFts)
+                         : combinedForSelection(combinedRecords, byFt, activeFts);
+    const qlo = lo-1e-9, qhi = hi+1e-9;
+    const crIn = filterRange(cr, qlo, qhi);
     const totalNrCombined = sumN(crIn);
-    const vVelocity = RM.velocity.compute(cr, yl, yh);
-    const vPrice = RM.price.compute(cr, yl, yh);
-    const vLease = RM.lease.compute(cr, yl, yh);
-    const vPsf = RM.psf.compute(cr, yl, yh);
-    const vArea = RM.area.compute(cr, yl, yh);
-    const vCagrPrice = RM.cagr_price.compute(cr, yl, yh);
-    const vCagrPsf = RM.cagr_psf.compute(cr, yl, yh);
-    const vGrowth = RM.growth_price.compute(cr, yl, yh);
+    const spanYears = quarterly ? (hi-lo)+0.25 : (yh-yl+1);
+    const vVelocity = crIn.length ? totalNrCombined/spanYears : null;
+    const vPrice = RM.price.compute(cr, qlo, qhi);
+    const vLease = RM.lease.compute(cr, qlo, qhi);
+    const vPsf = RM.psf.compute(cr, qlo, qhi);
+    const vArea = RM.area.compute(cr, qlo, qhi);
+    const vCagrPrice = RM.cagr_price.compute(cr, qlo, qhi);
+    const vCagrPsf = RM.cagr_psf.compute(cr, qlo, qhi);
+    const vGrowth = RM.growth_price.compute(cr, qlo, qhi);
     const typeNote = activeFts.length===flatTypes.length ? 'all flat types' : activeFts.join(', ');
 
     document.getElementById('miniStats').innerHTML =
@@ -827,21 +898,26 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
       statLine(RM.cagr_price.fmt(vCagrPrice), RM.cagr_price.label.toLowerCase(), computeRank('cagr_price',yl,yh,rankCtx,activeFts)) +
       statLine(RM.cagr_psf.fmt(vCagrPsf), RM.cagr_psf.label.toLowerCase(), computeRank('cagr_psf',yl,yh,rankCtx,activeFts)) +
       statLine(RM.growth_price.fmt(vGrowth), RM.growth_price.label.toLowerCase(), computeRank('growth_price',yl,yh,rankCtx,activeFts)) +
-      statLine(chg!==null? (chg>0?'+':'')+chg+'%':'—', `${metric.label} change (chart view), ${yl}→${yh}`, '');
+      statLine(chg!==null? (chg>0?'+':'')+chg+'%':'—', `${metric.label} change (chart view), ${first?P(first[F.YEAR]):P(lo)}→${last?P(last[F.YEAR]):P(hi)}`, '');
   }
   currentSeriesUpdate = update;
 
-  function renderTable(rows){
-    const cols = ['Year','Flat type','Tx','Median $psf','Median price','Avg price','Min price','Max price','Avg sqm','Avg sqft','Avg lease left'];
+  function renderTable(rows, quarterly){
+    const cols = [quarterly?'Quarter':'Year','Flat type','Tx','Δ median price vs prev. '+(quarterly?'quarter':'year'),'Median $psf','Median price','Avg price','Min price','Max price','Avg sqm','Avg sqft','Avg lease left'];
     let html = '<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+    const step = quarterly ? 0.25 : 1, prevBy = {};
+    rows.forEach(({ft,r})=>{ prevBy[ft+'|'+r[F.YEAR].toFixed(2)] = r; });
     rows.slice().sort((a,b)=> a.r[F.YEAR]-b.r[F.YEAR] || a.ft.localeCompare(b.ft)).forEach(({ft,r})=>{
-      html += `<tr><td>${r[F.YEAR]}</td><td>${ft}</td><td>${r[F.N]}</td><td>$${r[F.PSF_MEDIAN].toFixed(0)}</td><td>$${r[F.PRICE_MEDIAN].toLocaleString()}</td><td>$${r[F.PRICE_MEAN].toLocaleString()}</td><td>$${r[F.PRICE_MIN].toLocaleString()}</td><td>$${r[F.PRICE_MAX].toLocaleString()}</td><td>${r[F.AREA_MEAN]}</td><td>${sqft(r[F.AREA_MEAN])}</td><td>${r[F.LEASE_MEAN]}y</td></tr>`;
+      const prev = prevBy[ft+'|'+(r[F.YEAR]-step).toFixed(2)];
+      const d = prev ? (r[F.PRICE_MEDIAN]/prev[F.PRICE_MEDIAN]-1)*100 : null;
+      const dTxt = d==null ? '—' : `<span style="color:${d>=0?'var(--accent, #0E7C6B)':'#C0392B'}">${d>=0?'+':''}${d.toFixed(1)}%</span>`;
+      html += `<tr><td>${fmtPeriod(r[F.YEAR],quarterly)}</td><td>${ft}</td><td>${r[F.N]}</td><td>${dTxt}</td><td>$${r[F.PSF_MEDIAN].toFixed(0)}</td><td>$${r[F.PRICE_MEDIAN].toLocaleString()}</td><td>$${r[F.PRICE_MEAN].toLocaleString()}</td><td>$${r[F.PRICE_MIN].toLocaleString()}</td><td>$${r[F.PRICE_MAX].toLocaleString()}</td><td>${r[F.AREA_MEAN]}</td><td>${sqft(r[F.AREA_MEAN])}</td><td>${r[F.LEASE_MEAN]}y</td></tr>`;
     });
     html += '</tbody>';
     document.getElementById('datatable').innerHTML = html;
   }
 
-  function drawChart(rows, activeFts, metric, yl, yh){
+  function drawChart(rows, activeFts, metric, yl, yh, quarterly){
     const ctx = document.getElementById('chartCanvas').getContext('2d');
     if(chart) chart.destroy();
     const css = getComputedStyle(document.documentElement);
@@ -896,16 +972,25 @@ function selectSeries(title, breadcrumbHtml, byFt, combinedRecords, rankCtx){
         responsive:true, maintainAspectRatio:false,
         interaction:{mode:'nearest', intersect:false},
         scales:{
-          x:{ type:'linear', min:yl, max:yh, ticks:{stepSize:1, precision:0, color: inkSoft, callback:v=>String(v)}, grid:{color: gridCol} },
+          x:{ type:'linear', min: quarterly ? yl-0.1 : yl, max: quarterly ? yh+0.1 : yh,
+              ticks:{ stepSize: quarterly?0.25:1, color: inkSoft, autoSkip:true, maxRotation:0,
+                      callback:v=>{ if(!quarterly) return Number.isInteger(v)?String(v):''; const y=Math.floor(v+1e-9), q=Math.round((v-y)*4)+1; if(Math.abs(v*4-Math.round(v*4))>1e-6) return ''; return q===1?`${y} Q1`:`Q${q}`; } },
+              afterBuildTicks: quarterly ? (ax)=>{ const t=[]; for(let v=Math.ceil(yl*4)/4; v<=yh+1e-9; v+=0.25) t.push({value:+v.toFixed(2)}); ax.ticks=t; } : undefined,
+              grid:{color: gridCol} },
           y:{ ticks:{ color: inkSoft, callback:v=> metric.fmt(v) }, grid:{color: gridCol} }
         },
         plugins:{
           legend:{ display: datasets.length>1, labels:{color: inkCol, filter:(item)=> metric.type!=='range' || !item.text.endsWith(' min') } },
-          tooltip:{ callbacks:{ label:(c)=>{
+          tooltip:{ callbacks:{ title:(items)=> items.length ? fmtPeriod(items[0].raw.x, quarterly) : '',
+            label:(c)=>{
             const d=c.raw;
-            if(metric.type==='range') return `${c.dataset.label}: $${d.y.toLocaleString()} (of ${d.n} tx that year)`;
+            const prevPt = c.dataIndex>0 ? c.dataset.data[c.dataIndex-1] : null;
+            const stepNow = quarterly?0.25:1;
+            const chgTxt = (metric.type==='line' && prevPt && Math.abs(d.x-prevPt.x-stepNow)<1e-6 && prevPt.y)
+              ? ` · ${((d.y/prevPt.y-1)*100>=0?'+':'')}${((d.y/prevPt.y-1)*100).toFixed(1)}% vs ${fmtPeriod(prevPt.x,quarterly)}` : '';
+            if(metric.type==='range') return `${c.dataset.label}: $${d.y.toLocaleString()} (of ${d.n} tx that ${quarterly?'quarter':'year'})`;
             if(metric.type==='bar') return `${c.dataset.label}: ${d.y} tx`;
-            return `${c.dataset.label}: ${metric.fmt(d.y)} (${nContext(d.n)}, psf $${d.psf?.toFixed(0)}, ${d.area}sqm/${sqft(d.area)}sqft, ${d.lease}y left)`;
+            return `${c.dataset.label}: ${metric.fmt(d.y)}${chgTxt} (${nContext(d.n)}, psf $${d.psf?.toFixed(0)}, ${d.area}sqm/${sqft(d.area)}sqft, ${d.lease}y left)`;
           }}}
         }
       }
@@ -967,7 +1052,7 @@ function renderCompareTable(){
   }));
 }
 
-document.getElementById('footnote').innerHTML = `Prices are aggregated from registered resale transactions grouped by street (or town, or nationwide), flat type and year — not individual listings. $psf is computed per transaction then the median taken per group. Remaining-lease and price sliders inside a street/town view act on that yearly aggregate (chart &amp; data table only), so they can drop a whole year's point for a flat type rather than individual flats within it. <b>Flat-type selection</b>: when every flat type an entity actually has is toggled on (the default), all combined figures use the exact directly-computed data. When you deselect some flat types — on the map, in a town's street list, or in a street/town/nationwide detail view — the combined figures for transaction count, average price, lowest/highest price, average floor area and average lease are still exact (these recombine validly from per-flat-type aggregates); average $psf and the median shown in the data table are a transaction-count-weighted <em>approximation</em> across the selected types, since an exact combined median can't be reconstructed from per-type medians alone. <b>CAGR</b> (compound annual growth rate) is the steady <em>annual</em> rate implied by the first and last year with data in the selected range: (last/first)^(1/years)−1. <b>Total % growth</b> is simply (last/first−1) — the overall change across the period, <em>not</em> annualized; it will read higher than CAGR for any period longer than a year (e.g. 60% total growth over 10 years is roughly a 4.8%/yr CAGR) — showing both because they answer different questions. "Velocity" is transactions/year within whichever year range is currently selected. Covers all five data.gov.sg "Resale Flat Prices" era files (Approval Date 1990–1999, Approval Date 2000–Feb 2012, Registration Date Mar 2012–Dec 2014, Registration Date Jan 2015–Dec 2016, Registration Date Jan 2017 onwards), harmonized into one schema; the 2017-onwards portion is pulled live from the data.gov.sg API on every refresh (latest transaction month: __LATEST_MONTH__; page last rebuilt __BUILT_AT__). LIM CHU KANG is a small, now-defunct HDB town with only 63 transactions (1990–1998, one street) — included for completeness but will show as gray/dashed on the map for any year range after 1998.`;
+document.getElementById('footnote').innerHTML = `Prices are aggregated from registered resale transactions grouped by street (or town, or nationwide), flat type and year — not individual listings. $psf is computed per transaction then the median taken per group. Remaining-lease and price sliders inside a street/town view act on that yearly aggregate (chart &amp; data table only), so they can drop a whole year's point for a flat type rather than individual flats within it. <b>Flat-type selection</b>: when every flat type an entity actually has is toggled on (the default), all combined figures use the exact directly-computed data. When you deselect some flat types — on the map, in a town's street list, or in a street/town/nationwide detail view — the combined figures for transaction count, average price, lowest/highest price, average floor area and average lease are still exact (these recombine validly from per-flat-type aggregates); average $psf and the median shown in the data table are a transaction-count-weighted <em>approximation</em> across the selected types, since an exact combined median can't be reconstructed from per-type medians alone. <b>CAGR</b> (compound annual growth rate) is the steady <em>annual</em> rate implied by the first and last year with data in the selected range: (last/first)^(1/years)−1. <b>Total % growth</b> is simply (last/first−1) — the overall change across the period, <em>not</em> annualized; it will read higher than CAGR for any period longer than a year (e.g. 60% total growth over 10 years is roughly a 4.8%/yr CAGR) — showing both because they answer different questions. "Velocity" is transactions/year within whichever year range is currently selected. Covers all five data.gov.sg "Resale Flat Prices" era files (Approval Date 1990–1999, Approval Date 2000–Feb 2012, Registration Date Mar 2012–Dec 2014, Registration Date Jan 2015–Dec 2016, Registration Date Jan 2017 onwards), harmonized into one schema; the 2017-onwards portion is pulled live from the data.gov.sg API on every refresh (latest transaction month: __LATEST_MONTH__; page last rebuilt __BUILT_AT__). <b>Quarterly timescale</b>: in a street/town/nationwide view, when the selected year range spans ${QUARTERLY_AUTO_MAX_YEARS} years or less (or you pick Quarterly), the chart, data table and mini-stats switch to calendar quarters (Q1 = Jan–Mar, by registration month) and you can narrow to specific quarters; ranks still compare peers on full years. Quarterly points rest on fewer transactions, so single-street quarters can be noisy — check the tx count. LIM CHU KANG is a small, now-defunct HDB town with only 63 transactions (1990–1998, one street) — included for completeness but will show as gray/dashed on the map for any year range after 1998.`;
 </script>
 </body>
 </html>
