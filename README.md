@@ -4,6 +4,12 @@ An interactive dashboard of Singapore HDB resale prices from 1990 to now, broken
 
 **Live dashboard:** https://garethgoh99.github.io/hdb-resale-dashboard/
 
+## Using it
+
+- The map opens on 2015 to the latest month; the year slider reaches back to 1990.
+- **Multi-select:** switch the map's *Town selection* to *Multi-select* (or Ctrl/⌘/Shift-click, or use *Pick towns from a list*) to choose several towns. Their streets are ranked together in one list.
+- Tick streets, town rows or *All Singapore*, then choose **Compare side by side** (one line per item, up to 8, with a per-item stats table) or **Combine into one** (pooled into a single series). Pooled counts, means, lowest and highest are exact; a pooled median is a transaction-weighted average of the members' medians. An item already inside another ticked item is left out of pooled figures so nothing is counted twice.
+
 ## How it stays up to date
 
 A GitHub Actions workflow (`.github/workflows/refresh-dashboard.yml`) runs every day at 02:17 SGT. It also runs on every push to `main`, and whenever you press **Actions → Refresh dashboard → Run workflow**. Each run does the following:
@@ -15,7 +21,7 @@ A GitHub Actions workflow (`.github/workflows/refresh-dashboard.yml`) runs every
    - It refuses to continue if a dataset comes back empty, short or with missing columns.
 2. **`pipeline/harmonize.py`** merges the five eras into one schema. This covers the lease-string parsing, the `MULTI GENERATION` spelling fix, the 99-year-lease fallback and $psf.
 3. **`pipeline/build.py`** aggregates the data into the 18-field records (via `pipeline/aggregate.py`) and fills `template/dashboard_template.html` to produce `site/index.html`.
-   It also writes per-quarter aggregates to `site/q/<town>.json`. These are loaded on demand: `q/towns.json` for the map, comparison table and town ranks, and `q/<town>.json` for the street bars and detail views. Both the map and the detail view switch to quarters when the range is 5 years or less, or when Quarterly is picked.
+   It also writes per-quarter aggregates to `site/q/<town>.json`. These are loaded on demand: `q/towns.json` for the map, comparison table and town ranks, and `q/<town>.json` for the street bars and detail views. Both the map and the detail view switch to quarters when Quarterly is picked (Yearly is the default).
 4. The workflow syntax-checks the page and deploys it to GitHub Pages.
 5. If the data changed, it commits `data/latest_meta.json`. That file is a small refresh log, and the commits also keep the daily schedule from being auto-disabled.
 
